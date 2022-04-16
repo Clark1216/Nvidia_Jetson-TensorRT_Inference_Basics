@@ -1,0 +1,31 @@
+version: "3.7"
+services:
+  camera_based_person_counter:
+     container_name: camera_based_person_counter
+     image: pytorch-cv2-jetson_nano:1.0
+     build: .
+     network_mode: host
+     restart: always
+     volumes:
+        - ./my-detection-python:/jetson-inference/my-detection-python
+        - ./data:/jetson-inference/data
+        - ./python/training/classification/data:/jetson-inference/python/training/classification/data
+        - ./python/training/classification/models:/jetson-inference/python/training/classification/models
+        - ./python/training/detection/ssd/data:/jetson-inference/python/training/detection/ssd/data
+        - ./python/training/detection/ssd/models:/jetson-inference/python/training/detection/ssd/models
+     runtime: nvidia
+     environment:
+        LD_LIBRARY_PATH: /opt/vc/lib
+        DISPLAY:
+     devices:
+        - "/dev/bus/usb:/dev/bus/usb"
+        - "/dev/video0:/dev/video0"
+        - "/dev/vchiq:/dev/vchiq"
+        - /tmp/argus_socket:/tmp/argus_socket
+        - /etc/enctune.conf:/etc/enctune.conf
+     privileged: true
+     # command: tail -f /dev/null
+     command: bash -c "cd ./my-detection-python/ && python3 camera_based_person_counter_API2.py"
+     # command: bash -c "cd /app/ && python3 Hello_World_API.py"
+
+     # command: bash -c "python3 Hello_World_API.py"
