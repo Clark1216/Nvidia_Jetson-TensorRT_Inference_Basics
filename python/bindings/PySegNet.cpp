@@ -46,8 +46,13 @@ typedef struct {
 				 "                           see below for available options.\n\n" \
 				 "       argv (strings) -- command line arguments passed to segNet,\n" \
 				 "                         see below for available options.\n\n" \
+				 "     Extended parameters for loading custom models:\n" \
+				 "       model (string) -- path to self-trained ONNX model to load.\n\n" \
+				 "       labels (string) -- path to labels.txt file (optional)\n\n" \
+				 "       colors (string) -- path to colors.txt file (optional)\n\n" \
+				 "       input_blob (string) -- name of the input layer of the model.\n\n" \
+				 "       output_blob (string) -- name of the output layer of the model.\n\n" \
  				 SEGNET_USAGE_STRING
-
 
 // Init
 static int PySegNet_Init( PySegNet_Object* self, PyObject *args, PyObject *kwds )
@@ -55,22 +60,23 @@ static int PySegNet_Init( PySegNet_Object* self, PyObject *args, PyObject *kwds 
 	LogDebug(LOG_PY_INFERENCE "PySegNet_Init()\n");
 
 	// parse arguments
-	PyObject* argList     = NULL;
-	const char* network   = "fcn-resnet18-pascal-voc";
-	static char* kwlist[] = {"network", "argv", NULL};
+	PyObject* argList = NULL;
+	
+	const char* network     = "fcn-resnet18-pascal-voc";
+	const char* model       = NULL;
+	const char* labels      = NULL;
+	const char* colors      = NULL;
+	const char* input_blob  = SEGNET_DEFAULT_INPUT;
+	const char* output_blob = SEGNET_DEFAULT_OUTPUT;
+	
+	static char* kwlist[] = {"network", "argv", "model", "labels", "colors", "input_blob", "output_blob", NULL};
 
-	if( !PyArg_ParseTupleAndKeywords(args, kwds, "|sO", kwlist, &network, &argList))
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "segNet.__init()__ failed to parse args tuple");
-		LogError(LOG_PY_INFERENCE "segNet.__init()__ failed to parse args tuple\n");
+	if( !PyArg_ParseTupleAndKeywords(args, kwds, "|sOsssss", kwlist, &network, &argList, &model, &labels, &colors, &input_blob, &output_blob))
 		return -1;
-	}
-    
+
 	// determine whether to use argv or built-in network
 	if( argList != NULL && PyList_Check(argList) && PyList_Size(argList) > 0 )
 	{
-		LogVerbose(LOG_PY_INFERENCE "segNet loading network using argv command line params\n");
-
 		// parse the python list into char**
 		const size_t argc = PyList_Size(argList);
 
@@ -102,34 +108,24 @@ static int PySegNet_Init( PySegNet_Object* self, PyObject *args, PyObject *kwds 
 		}
 
 		// load the network using (argc, argv)
+		Py_BEGIN_ALLOW_THREADS
 		self->net = segNet::Create(argc, argv);
-
+		Py_END_ALLOW_THREADS
+		
 		// free the arguments array
 		free(argv);
 	}
 	else
 	{
-		LogVerbose(LOG_PY_INFERENCE "segNet loading build-in network '%s'\n", network);
-		
-		// parse the selected built-in network
-		segNet::NetworkType networkType = segNet::NetworkTypeFromStr(network);
-		
-		if( networkType == segNet::SEGNET_CUSTOM )
-		{
-			PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "segNet invalid built-in network was requested");
-			LogError(LOG_PY_INFERENCE "segNet invalid built-in network was requested ('%s')\n", network);
-			return -1;
-		}
-		
-		// load the built-in network
-		self->net = segNet::Create(networkType);
+		Py_BEGIN_ALLOW_THREADS
+		self->net = segNet::Create(NULL, model != NULL ? model : network, labels, colors, input_blob, output_blob);
+		Py_END_ALLOW_THREADS
 	}
-
+	
 	// confirm the network loaded
 	if( !self->net )
 	{
 		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "segNet failed to load network");
-		LogError(LOG_PY_INFERENCE "segNet failed to load network\n");
 		return -1;
 	}
 
@@ -196,8 +192,11 @@ static PyObject* PySegNet_Process( PySegNet_Object* self, PyObject* args, PyObje
 		return NULL;
 
 	// classify the image
-	const bool result = self->net->Process(ptr, width, height, format, ignore_class);
-
+	bool result = false;
+	Py_BEGIN_ALLOW_THREADS
+	result = self->net->Process(ptr, width, height, format, ignore_class);
+	Py_END_ALLOW_THREADS
+	
 	if( !result )
 	{
 		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "segNet.Process() encountered an error segmenting the image");
@@ -237,10 +236,7 @@ static PyObject* PySegNet_Overlay( PySegNet_Object* self, PyObject* args, PyObje
 	static char* kwlist[] = {"image", "width", "height", "filter_mode", "format", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "O|iiss", kwlist, &capsule, &width, &height, &filter_str, &format_str))
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "segNet.Overlay() failed to parse args tuple");
 		return NULL;
-	}
 
 	// verify filter mode
 	segNet::FilterMode filterMode;
@@ -265,14 +261,17 @@ static PyObject* PySegNet_Overlay( PySegNet_Object* self, PyObject* args, PyObje
 		return NULL;
 
 	// visualize the image
-	const bool result = self->net->Overlay(ptr, width, height, format, filterMode);
-
+	bool result = false;
+	Py_BEGIN_ALLOW_THREADS
+	result = self->net->Overlay(ptr, width, height, format, filterMode);
+	Py_END_ALLOW_THREADS
+	
 	if( !result )
 	{
 		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "segNet.Overlay() encountered an error segmenting the image");
 		return NULL;
 	}
-
+	
 	Py_RETURN_NONE;
 }
 
@@ -306,10 +305,7 @@ static PyObject* PySegNet_Mask( PySegNet_Object* self, PyObject* args, PyObject 
 	static char* kwlist[] = {"image", "width", "height", "filter_mode", "format", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "O|iiss", kwlist, &capsule, &width, &height, &filter_str, &format_str))
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "segNet.Mask() failed to parse args tuple");
 		return NULL;
-	}
 
 	// verify filter mode
 	segNet::FilterMode filterMode;
@@ -333,27 +329,26 @@ static PyObject* PySegNet_Mask( PySegNet_Object* self, PyObject* args, PyObject 
 	if( !ptr )
 		return NULL;
 
+	bool result = false;
+	Py_BEGIN_ALLOW_THREADS
+	
 	if( format == IMAGE_GRAY8 )
 	{
 		// class binary mask
-		const bool result = self->net->Mask((uint8_t*)ptr, width, height);
-
-		if( !result )
-		{
-			PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "segNet.Mask() encountered an error generating the class mask");
-			return NULL;
-		}
+		result = self->net->Mask((uint8_t*)ptr, width, height);
 	}
 	else
 	{
 		// colorized mask
-		const bool result = self->net->Mask(ptr, width, height, format, filterMode);
-
-		if( !result )
-		{
-			PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "segNet.Mask() encountered an error generating the colorized mask");
-			return NULL;
-		}
+		result = self->net->Mask(ptr, width, height, format, filterMode);		
+	}
+	
+	Py_END_ALLOW_THREADS
+	
+	if( !result )
+	{
+		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "segNet.Mask() encountered an error generating the segmentation mask");
+		return NULL;
 	}
 
 	Py_RETURN_NONE;
@@ -415,11 +410,8 @@ PyObject* PySegNet_GetClassDesc( PySegNet_Object* self, PyObject* args )
 	int classIdx = 0;
 
 	if( !PyArg_ParseTuple(args, "i", &classIdx) )
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "segNet failed to parse arguments");
 		return NULL;
-	}
-		
+
 	if( classIdx < 0 || classIdx >= self->net->GetNumClasses() )
 	{
 		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "segNet requested class index is out of bounds");
@@ -448,24 +440,21 @@ PyObject* PySegNet_GetClassColor( PySegNet_Object* self, PyObject* args )
 	int classIdx = 0;
 
 	if( !PyArg_ParseTuple(args, "i", &classIdx) )
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "segNet failed to parse arguments");
 		return NULL;
-	}
-		
+
 	if( classIdx < 0 || classIdx >= self->net->GetNumClasses() )
 	{
 		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "segNet requested class index is out of bounds");
 		return NULL;
 	}
 
-	float* color = self->net->GetClassColor(classIdx);
+	const float4 color = self->net->GetClassColor(classIdx);
 	
 	// create tuple objects
-	PyObject* r = PyFloat_FromDouble(color[0]);
-	PyObject* g = PyFloat_FromDouble(color[1]);
-	PyObject* b = PyFloat_FromDouble(color[2]);
-	PyObject* a = PyFloat_FromDouble(color[3]);
+	PyObject* r = PyFloat_FromDouble(color.x);
+	PyObject* g = PyFloat_FromDouble(color.y);
+	PyObject* b = PyFloat_FromDouble(color.z);
+	PyObject* a = PyFloat_FromDouble(color.w);
 	
 	PyObject* tuple = PyTuple_Pack(4, r, g, b, a);
 
@@ -475,6 +464,24 @@ PyObject* PySegNet_GetClassColor( PySegNet_Object* self, PyObject* args )
 	Py_DECREF(a);
 	
 	return tuple;
+}
+
+
+#define DOC_GET_OVERLAY_ALPHA "Return the overlay alpha blending value for classes that don't have it explicitly set.\n\n" \
+				 	     "Parameters: (none)\n\n" \
+					     "Returns:\n" \
+					     "  (float) -- alpha blending value between [0,255]"
+
+// GetOverlayAlpha
+PyObject* PySegNet_GetOverlayAlpha( PySegNet_Object* self )
+{
+	if( !self || !self->net )
+	{
+		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "segNet invalid object instance");
+		return NULL;
+	}
+	
+	return PyFloat_FromDouble(self->net->GetOverlayAlpha());
 }
 
 
@@ -499,10 +506,7 @@ PyObject* PySegNet_SetOverlayAlpha( PySegNet_Object* self, PyObject* args, PyObj
 	static char* kwlist[] = {"alpha", "explicit_exempt", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "f|i", kwlist, &alpha, &exempt) )
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "segNet.SetOverlayAlpha() failed to parse arguments");
 		return NULL;
-	}
 		
 	if( alpha < 0.0f || alpha > 255.0f )
 	{
@@ -611,11 +615,13 @@ static PyMethodDef PySegNet_Methods[] =
 	{ "Mask", (PyCFunction)PySegNet_Mask, METH_VARARGS|METH_KEYWORDS, DOC_MASK},	
 	{ "GetNetworkName", (PyCFunction)PySegNet_GetNetworkName, METH_NOARGS, DOC_GET_NETWORK_NAME},
      { "GetNumClasses", (PyCFunction)PySegNet_GetNumClasses, METH_NOARGS, DOC_GET_NUM_CLASSES},
+	{ "GetClassLabel", (PyCFunction)PySegNet_GetClassDesc, METH_VARARGS, DOC_GET_CLASS_DESC},
 	{ "GetClassDesc", (PyCFunction)PySegNet_GetClassDesc, METH_VARARGS, DOC_GET_CLASS_DESC},
 	{ "GetClassColor", (PyCFunction)PySegNet_GetClassColor, METH_VARARGS, DOC_GET_CLASS_COLOR},
 	{ "GetGridWidth", (PyCFunction)PySegNet_GetGridWidth, METH_NOARGS, DOC_GET_GRID_WIDTH},
 	{ "GetGridHeight", (PyCFunction)PySegNet_GetGridHeight, METH_NOARGS, DOC_GET_GRID_HEIGHT},
 	{ "GetGridSize", (PyCFunction)PySegNet_GetGridSize, METH_NOARGS, DOC_GET_GRID_SIZE},
+	{ "GetOverlayAlpha", (PyCFunction)PySegNet_GetOverlayAlpha, METH_NOARGS, DOC_GET_OVERLAY_ALPHA},
 	{ "SetOverlayAlpha", (PyCFunction)PySegNet_SetOverlayAlpha, METH_VARARGS|METH_KEYWORDS, DOC_SET_OVERLAY_ALPHA},
 	{ "Usage", (PyCFunction)PySegNet_Usage, METH_NOARGS|METH_STATIC, DOC_USAGE_STRING},
 	{NULL}  /* Sentinel */

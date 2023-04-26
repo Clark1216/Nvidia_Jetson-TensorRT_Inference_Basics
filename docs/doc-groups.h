@@ -31,14 +31,14 @@
  */
 
 /**
- * @defgroup depthNet depthNet
- * Mono depth estimation from monocular images.
- * @ingroup deepVision
- */
- 
-/**
  * @defgroup detectNet detectNet
  * Object detection DNN (SSD, DetectNet)
+ * @ingroup deepVision
+ */
+
+/**
+ * @defgroup segNet segNet
+ * Semantic segmentation DNN (FCN or Fully-Convolutional Networks)
  * @ingroup deepVision
  */
 
@@ -47,10 +47,34 @@
  * Pose estimation DNN
  * @ingroup deepVision
  */
+
+/**
+ * @defgroup actionNet actionNet
+ * Action/activity recognition DNN
+ * @ingroup deepVision
+ */
  
 /**
- * @defgroup segNet segNet
- * Semantic segmentation DNN (FCN or Fully-Convolutional Networks)
+ * @defgroup depthNet depthNet
+ * Mono depth estimation from monocular images.
+ * @ingroup deepVision
+ */
+
+/**
+ * @defgroup backgroundNet backgroundNet
+ * Foreground/background segmentation and removal DNN
+ * @ingroup deepVision
+ */
+ 
+/**
+ * @defgroup objectTracker Object Tracking
+ * Object tracking used by detectNet
+ * @ingroup deepVision
+ */
+ 
+/**
+ * @defgroup modelDownloader Model Downloader
+ * Utilities for automatically downloading pre-trained models.
  * @ingroup deepVision
  */
  

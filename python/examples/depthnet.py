@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 #
 # Copyright (c) 2021, NVIDIA CORPORATION. All rights reserved.
 #
@@ -21,21 +21,21 @@
 # DEALINGS IN THE SOFTWARE.
 #
 
-import jetson.inference
-import jetson.utils
-
-import argparse
 import sys
+import argparse
+
+from jetson_inference import depthNet
+from jetson_utils import videoSource, videoOutput, cudaOverlay, cudaDeviceSynchronize, Log
 
 from depthnet_utils import depthBuffers
 
 # parse the command line
 parser = argparse.ArgumentParser(description="Mono depth estimation on a video/image stream using depthNet DNN.", 
-                                 formatter_class=argparse.RawTextHelpFormatter, epilog=jetson.inference.depthNet.Usage() +
-                                 jetson.utils.videoSource.Usage() + jetson.utils.videoOutput.Usage() + jetson.utils.logUsage())
+                                 formatter_class=argparse.RawTextHelpFormatter, 
+                                 epilog=depthNet.Usage() + videoSource.Usage() + videoOutput.Usage() + Log.Usage())
 
-parser.add_argument("input_URI", type=str, default="", nargs='?', help="URI of the input stream")
-parser.add_argument("output_URI", type=str, default="", nargs='?', help="URI of the output stream")
+parser.add_argument("input", type=str, default="", nargs='?', help="URI of the input stream")
+parser.add_argument("output", type=str, default="", nargs='?', help="URI of the output stream")
 parser.add_argument("--network", type=str, default="fcn-mobilenet", help="pre-trained model to load, see below for options")
 parser.add_argument("--visualize", type=str, default="input,depth", help="visualization options (can be 'input' 'depth' 'input,depth'")
 parser.add_argument("--depth-size", type=float, default=1.0, help="scales the size of the depth map visualization, as a percentage of the input size (default is 1.0)")
@@ -45,48 +45,51 @@ parser.add_argument("--colormap", type=str, default="viridis-inverted", help="co
                                            "plasma", "plasma-inverted", "turbo", "turbo-inverted", "viridis", "viridis-inverted"])
 
 try:
-	opt = parser.parse_known_args()[0]
+	args = parser.parse_known_args()[0]
 except:
 	print("")
 	parser.print_help()
 	sys.exit(0)
 
 # load the segmentation network
-net = jetson.inference.depthNet(opt.network, sys.argv)
+net = depthNet(args.network, sys.argv)
 
 # create buffer manager
-buffers = depthBuffers(opt)
+buffers = depthBuffers(args)
 
 # create video sources & outputs
-input = jetson.utils.videoSource(opt.input_URI, argv=sys.argv)
-output = jetson.utils.videoOutput(opt.output_URI, argv=sys.argv)
+input = videoSource(args.input, argv=sys.argv)
+output = videoOutput(args.output, argv=sys.argv)
 
-# process frames until user exits
+# process frames until EOS or the user exits
 while True:
     # capture the next image
     img_input = input.Capture()
 
+    if img_input is None: # timeout
+        continue
+        
     # allocate buffers for this size image
     buffers.Alloc(img_input.shape, img_input.format)
 
     # process the mono depth and visualize
-    net.Process(img_input, buffers.depth, opt.colormap, opt.filter_mode)
+    net.Process(img_input, buffers.depth, args.colormap, args.filter_mode)
 
     # composite the images
     if buffers.use_input:
-        jetson.utils.cudaOverlay(img_input, buffers.composite, 0, 0)
+        cudaOverlay(img_input, buffers.composite, 0, 0)
         
     if buffers.use_depth:
-        jetson.utils.cudaOverlay(buffers.depth, buffers.composite, img_input.width if buffers.use_input else 0, 0)
+        cudaOverlay(buffers.depth, buffers.composite, img_input.width if buffers.use_input else 0, 0)
 
     # render the output image
     output.Render(buffers.composite)
 
     # update the title bar
-    output.SetStatus("{:s} | {:s} | Network {:.0f} FPS".format(opt.network, net.GetNetworkName(), net.GetNetworkFPS()))
+    output.SetStatus("{:s} | {:s} | Network {:.0f} FPS".format(args.network, net.GetNetworkName(), net.GetNetworkFPS()))
 
     # print out performance info
-    jetson.utils.cudaDeviceSynchronize()
+    cudaDeviceSynchronize()
     net.PrintProfilerTimes()
 
     # exit on input/output EOS

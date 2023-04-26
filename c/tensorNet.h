@@ -75,6 +75,13 @@ typedef nvinfer1::Dims3 Dims3;
 
 
 /**
+ * Macro for checking the minimum version of TensorRT that is installed.
+ * This evaluates to true if TensorRT is newer or equal to the provided version.
+ * @ingroup tensorNet
+ */
+#define TENSORRT_VERSION_CHECK(major, minor, patch)  (NV_TENSORRT_MAJOR > major || (NV_TENSORRT_MAJOR == major && NV_TENSORRT_MINOR > minor) || (NV_TENSORRT_MAJOR == major && NV_TENSORRT_MINOR == minor && NV_TENSORRT_PATCH >= patch))
+
+/**
  * Default maximum batch size
  * @ingroup tensorNet
  */
@@ -346,6 +353,45 @@ public:
 	bool LoadEngine( const char* filename, char** stream, size_t* size );
 
 	/**
+	 * Load a binary file into memory.
+	 */
+	bool LoadBinary( const char* filename, char** stream, size_t* size );
+	
+	/**
+	 * Load class descriptions from a label file.  
+	 * Each line of the text file should include one class label (and optionally a synset).
+	 * If the number of expected labels aren't parsed, they will be automatically generated.
+	 */
+	static bool LoadClassLabels( const char* filename, std::vector<std::string>& descriptions, int expectedClasses=-1 );
+
+	/**
+	 * Load class descriptions and synset strings from a label file.
+	 * Each line of the text file should include one class label (and optionally a synset).
+	 * If the number of expected labels aren't parsed, they will be automatically generated.
+	 */
+	static bool LoadClassLabels( const char* filename, std::vector<std::string>& descriptions, std::vector<std::string>& synsets, int expectedClasses=-1 );
+
+	/**
+	 * Load class colors from a text file.  If the number of expected colors aren't parsed, they will be generated.
+	 * The float4 color array should be `expectedClasses` long, and would typically be in shared CPU/GPU memory.
+	 * If a line in the text file only has RGB, then the defaultAlpha value will be used for the alpha channel.
+	 */
+	static bool LoadClassColors( const char* filename, float4* colors, int expectedClasses, float defaultAlpha=255.0f );
+
+	/**
+	 * Load class colors from a text file.  If the number of expected colors aren't parsed, they will be generated.
+	 * The float4 color array will automatically be allocated in shared CPU/GPU memory by `cudaAllocMapped()`.
+	 * If a line in the text file only has RGB, then the defaultAlpha value will be used for the alpha channel.
+	 */
+	static bool LoadClassColors( const char* filename, float4** colors, int expectedClasses, float defaultAlpha=255.0f );
+
+	/**
+	 * Procedurally generate a color for a given class index with the specified alpha value.
+	 * This function can be used to generate a range of colors when a colors.txt file isn't available.
+	 */
+	static float4 GenerateColor( uint32_t classID, float alpha=255.0f ); 
+	
+	/**
 	 * Manually enable layer profiling times.	
 	 */
 	void EnableLayerProfiler();
@@ -421,10 +467,15 @@ public:
 	inline const char* GetPrototxtPath() const				{ return mPrototxtPath.c_str(); }
 
 	/**
-	 * Retrieve the path to the network model file.
+	 * Retrieve the full path to model file, including the filename.
 	 */
 	inline const char* GetModelPath() const					{ return mModelPath.c_str(); }
 
+	/**
+	 * Retrieve the filename of the file, excluding the directory.
+	 */
+	inline const char* GetModelFilename() const				{ return mModelFile.c_str(); }
+	
 	/**
 	 * Retrieve the format of the network model.
 	 */
@@ -466,6 +517,11 @@ public:
 	inline uint32_t GetInputSize( uint32_t layer=0 ) const		{ return mInputs[layer].size; }
 
 	/**
+	 * Get the CUDA pointer to the input layer's memory.
+	 */
+	inline float* GetInputPtr( uint32_t layer=0 ) const		{ return mInputs[layer].CUDA; }
+	
+	/**
 	 * Retrieve the dimensions of network output layer.
 	 */
 	inline Dims3 GetOutputDims( uint32_t layer=0 ) const		{ return mOutputs[layer].dims; }
@@ -486,6 +542,11 @@ public:
 	inline uint32_t GetOutputSize( uint32_t layer=0 ) const	{ return mOutputs[layer].size; }
 
 	/**
+	 * Get the CUDA pointer to the output memory.
+	 */
+	inline float* GetOutputPtr( uint32_t layer=0 ) const		{ return mOutputs[layer].CUDA; }
+	
+	/**
 	 * Retrieve the network frames per second (FPS).
 	 */
 	inline float GetNetworkFPS()							{ return 1000.0f / GetNetworkTime(); }
@@ -494,6 +555,11 @@ public:
 	 * Retrieve the network runtime (in milliseconds).
 	 */
 	inline float GetNetworkTime()							{ return GetProfilerTime(PROFILER_NETWORK, PROFILER_CUDA); }
+	
+	/**
+	 * Retrieve the network name (it's filename).
+	 */
+	inline const char* GetNetworkName() const				{ return mModelFile.c_str(); }
 	
 	/**
 	 * Retrieve the profiler runtime (in milliseconds).
@@ -535,7 +601,7 @@ public:
 			first_run = false;
 		}
 	}
-
+	
 protected:
 
 	/**
@@ -582,6 +648,11 @@ protected:
 					   deviceType device, bool allowGPUFallback, 
 					   nvinfer1::IInt8Calibrator* calibrator );
 #endif
+
+	/**
+	 * Validate that the model already has a built TensorRT engine that exists and doesn't need updating.
+	 */
+	bool ValidateEngine( const char* model_path, const char* cache_path, const char* checksum_path );
 
 	/**
 	 * Logger class for GIE info/warning/errors
@@ -712,10 +783,12 @@ protected:
 	/* Member Variables */
 	std::string mPrototxtPath;
 	std::string mModelPath;
+	std::string mModelFile;
 	std::string mMeanPath;
 	std::string mCacheEnginePath;
 	std::string mCacheCalibrationPath;
-
+	std::string mChecksumPath;
+	
 	deviceType    mDevice;
 	precisionType mPrecision;
 	modelType     mModelType;

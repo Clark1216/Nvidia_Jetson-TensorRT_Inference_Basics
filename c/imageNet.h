@@ -39,6 +39,17 @@
  */
 #define IMAGENET_DEFAULT_OUTPUT  "prob"
 
+/**
+ * Default value of the minimum confidence threshold for classification.
+ * @ingroup imageNet
+ */
+#define IMAGENET_DEFAULT_THRESHOLD 0.01f
+
+/**
+ * The model type for imageNet in data/networks/models.json
+ * @ingroup imageNet
+ */
+#define IMAGENET_MODEL_TYPE "classification"
 
 /**
  * Standard command-line options able to be passed to imageNet::Create()
@@ -61,7 +72,8 @@
 		  "  --labels=LABELS      path to text file containing the labels for each class\n" 				\
 		  "  --input-blob=INPUT   name of the input layer (default is '" IMAGENET_DEFAULT_INPUT "')\n" 	\
 		  "  --output-blob=OUTPUT name of the output layer (default is '" IMAGENET_DEFAULT_OUTPUT "')\n" 	\
-		  "  --batch-size=BATCH   maximum batch size (default is 1)\n"								\
+		  "  --threshold=CONF     minimum confidence threshold for classification (default is 0.01)\n" 	\
+		  "  --smoothing=WEIGHT   weight between [0,1] or number of frames (disabled by default)\n"		\
 		  "  --profile            enable layer profiling in TensorRT\n\n"
 
 
@@ -73,42 +85,25 @@ class imageNet : public tensorNet
 {
 public:
 	/**
-	 * Network choice enumeration.
+	 * List of classification results where each entry represents a (classID, confidence) pair.
 	 */
-	enum NetworkType
-	{
-		CUSTOM,        /**< Custom model provided by the user */
-		ALEXNET,		/**< AlexNet trained on 1000-class ILSVRC12 */
-		GOOGLENET,	/**< GoogleNet trained 1000-class ILSVRC12 */
-		GOOGLENET_12,	/**< GoogleNet trained on 12-class subset of ImageNet ILSVRC12 from the tutorial */
-		RESNET_18,	/**< ResNet-18 trained on 1000-class ILSVRC15 */
-		RESNET_50,	/**< ResNet-50 trained on 1000-class ILSVRC15 */
-		RESNET_101,	/**< ResNet-101 trained on 1000-class ILSVRC15 */
-		RESNET_152,	/**< ResNet-50 trained on 1000-class ILSVRC15 */
-		VGG_16,		/**< VGG-16 trained on 1000-class ILSVRC14 */
-		VGG_19,		/**< VGG-19 trained on 1000-class ILSVRC14 */
-		INCEPTION_V4,	/**< Inception-v4 trained on 1000-class ILSVRC12 */
-	};
-
+	typedef std::vector<std::pair<uint32_t, float>> Classifications;
+	
 	/**
-	 * Parse a string to one of the built-in pretrained models.
-	 * Valid names are "alexnet", "googlenet", "googlenet-12", or "googlenet_12", ect.
-	 * @returns one of the imageNet::NetworkType enums, or imageNet::CUSTOM on invalid string.
+	 * Load one of the following pre-trained models:
+	 *
+	 *    - alexnet, googlenet, googlenet-12, 
+	 *    - resnet-18, resnet-50, resnet-101, resnet-152, 
+	 *    - vgg-16, vgg-19, inception-v4
+	 *
+	 * These are all 1000-class models trained on ImageNet ILSVRC,
+	 * except for googlenet-12 which is a 12-class subset of ILSVRC.
 	 */
-	static NetworkType NetworkTypeFromStr( const char* model_name );
-
-	/**
-	 * Convert a NetworkType enum to a string.
-	 */
-	static const char* NetworkTypeToStr( NetworkType network );
-
-	/**
-	 * Load a new network instance
-	 */
-	static imageNet* Create( NetworkType networkType=GOOGLENET, uint32_t maxBatchSize=DEFAULT_MAX_BATCH_SIZE, 
+	static imageNet* Create( const char* network="googlenet", 
+						uint32_t maxBatchSize=DEFAULT_MAX_BATCH_SIZE, 
 						precisionType precision=TYPE_FASTEST,
 				   		deviceType device=DEVICE_GPU, bool allowGPUFallback=true );
-	
+						
 	/**
 	 * Load a new network instance
 	 * @param prototxt_path File path to the deployable network prototxt
@@ -146,99 +141,176 @@ public:
 	 * Destroy
 	 */
 	virtual ~imageNet();
-	
+			
 	/**
-	 * Determine the maximum likelihood image class.
-	 * This function performs pre-processing to the image (apply mean-value subtraction and NCHW format), @see PreProcess() 
-	 * @param rgba input image in CUDA device memory.
+	 * Predict the maximum-likelihood image class whose confidence meets the minimum threshold.
+	 * Either the class with the maximum probability will be returned, or -1 if no class meets 
+	 * the threshold set by SetThreshold() or the `--threshold` command-line argument.
+	 *
+	 * @param image input image in CUDA device memory.
 	 * @param width width of the input image in pixels.
 	 * @param height height of the input image in pixels.
 	 * @param confidence optional pointer to float filled with confidence value.
-	 * @returns Index of the maximum class, or -1 on error.
+	 *
+	 * @returns ID of the class with the highest confidence, or -1 if no classes met the threshold.
+      *          If a runtime error occurred during processing, then a value of -2 will be returned. 
 	 */
 	template<typename T> int Classify( T* image, uint32_t width, uint32_t height, float* confidence=NULL )		{ return Classify((void*)image, width, height, imageFormatFromType<T>(), confidence); }
 	
 	/**
-	 * Determine the maximum likelihood image class.
-	 * This function performs pre-processing to the image (apply mean-value subtraction and NCHW format), @see PreProcess() 
-	 * @param rgba input image in CUDA device memory.
+	 * Predict the maximum-likelihood image class whose confidence meets the minimum threshold.
+	 * Either the class with the maximum probability will be returned, or -1 if no class meets 
+	 * the threshold set by SetThreshold() or the `--threshold` command-line argument.
+	 *
+	 * @param image input image in CUDA device memory.
 	 * @param width width of the input image in pixels.
 	 * @param height height of the input image in pixels.
+	 * @param format format of the image (rgb8, rgba8, rgb32f, rgba32f are supported)
 	 * @param confidence optional pointer to float filled with confidence value.
-	 * @returns Index of the maximum class, or -1 on error.
+	 *
+	 * @returns ID of the class with the highest confidence, or -1 if no classes met the threshold.
+      *          If a runtime error occurred during processing, then a value of -2 will be returned. 
 	 */
 	int Classify( void* image, uint32_t width, uint32_t height, imageFormat format, float* confidence=NULL );
 
 	/**
-	 * Determine the maximum likelihood image class.
-	 * This function performs pre-processing to the image (apply mean-value subtraction and NCHW format), @see PreProcess() 
-	 * @deprecated this overload of Classify() provides legacy compatibility with `float*` type (RGBA32F).
+	 * Predict the maximum-likelihood image class whose confidence meets the minimum threshold.
+	 * Either the class with the maximum probability will be returned, or -1 if no class meets 
+	 * the threshold set by SetThreshold() or the `--threshold` command-line argument.
+	 *
       * @param rgba float4 input image in CUDA device memory.
 	 * @param width width of the input image in pixels.
 	 * @param height height of the input image in pixels.
 	 * @param confidence optional pointer to float filled with confidence value.
-	 * @returns Index of the maximum class, or -1 on error.
+	 * @param format format of the image (rgb8, rgba8, rgb32f, rgba32f are supported)
+	 *
+	 * @returns ID of the class with the highest confidence, or -1 if no classes met the threshold.
+      *          If a runtime error occurred during processing, then a value of -2 will be returned. 
+	 * @deprecated this overload of Classify() provides legacy compatibility with `float*` type (RGBA32F).
 	 */
 	int Classify( float* rgba, uint32_t width, uint32_t height, float* confidence=NULL, imageFormat format=IMAGE_RGBA32F );
 
 	/**
+	 * Classify the image and return the topK image classification results that meet the minimum
+	 * confidence threshold set by SetThreshold() or the `--threshold` command-line argument.
+	 *
+	 * @param image input image in CUDA device memory.
+	 * @param width width of the input image in pixels.
+	 * @param height height of the input image in pixels.
+	 * @param classifications returns a list of the topK (classID, confidence) classification resuts, sorted from highest to lowest confidence.
+	 * @param topK the number of predictions to return (it can be less than this number if there weren't that many valid predictions)
+	 *             The default value of topK is 1, in which case only the highest-confidence result wil be returned.
+	 *             If the value of topK is <= 0, then all the valid predictions with confidence >= threshold will be returned.
+	 *
+	 * @returns ID of the class with the highest confidence, or -1 if no classes met the threshold.
+      *          If a runtime error occurred during processing, then a value of -2 will be returned. 
+	 */
+	template<typename T> int Classify( T* image, uint32_t width, uint32_t height, Classifications& classifications, int topK=1 )		{ return Classify((void*)image, width, height, imageFormatFromType<T>(), classifications, topK); }
+
+	/**
+	 * Classify the image and return the topK image classification results that meet the minimum
+	 * confidence threshold set by SetThreshold() or the `--threshold` command-line argument.
+	 *
+	 * @param image input image in CUDA device memory.
+	 * @param width width of the input image in pixels.
+	 * @param height height of the input image in pixels.
+	 * @param format format of the image (rgb8, rgba8, rgb32f, rgba32f are supported)
+	 * @param classifications returns a list of the topK (classID, confidence) classification resuts, sorted from highest to lowest confidence.
+	 * @param topK the number of predictions to return (it can be less than this number if there weren't that many valid predictions)
+	 *             The default value of topK is 1, in which case only the highest-confidence result wil be returned.
+	 *             If the value of topK is <= 0, then all the valid predictions with confidence >= threshold will be returned.
+	 *
+	 * @returns ID of the class with the highest confidence, or -1 if no classes met the threshold.
+      *          If a runtime error occurred during processing, then a value of -2 will be returned. 
+	 */
+	int Classify( void* image, uint32_t width, uint32_t height, imageFormat format, Classifications& classifications, int topK=1 );
+
+	/**
 	 * Retrieve the number of image recognition classes (typically 1000)
 	 */
-	inline uint32_t GetNumClasses() const						{ return mOutputClasses; }
+	inline uint32_t GetNumClasses() const						{ return mNumClasses; }
 	
 	/**
 	 * Retrieve the description of a particular class.
 	 */
-	inline const char* GetClassDesc( uint32_t index )	const		{ return mClassDesc[index].c_str(); }
+	inline const char* GetClassLabel( int index ) const			{ return GetClassDesc(index); }
+	
+	/**
+	 * Retrieve the description of a particular class.
+	 */
+	inline const char* GetClassDesc( int index )	const			{ return index >= 0 ? mClassDesc[index].c_str() : "none"; }
 	
 	/**
 	 * Retrieve the class synset category of a particular class.
 	 */
-	inline const char* GetClassSynset( uint32_t index ) const		{ return mClassSynset[index].c_str(); }
+	inline const char* GetClassSynset( int index ) const			{ return index >= 0 ? mClassSynset[index].c_str() : "none"; }
 	
 	/**
  	 * Retrieve the path to the file containing the class descriptions.
 	 */
 	inline const char* GetClassPath() const						{ return mClassPath.c_str(); }
-
+	
 	/**
-	 * Retrieve the network type (alexnet or googlenet)
+	 * Return the confidence threshold used for classification.
 	 */
-	inline NetworkType GetNetworkType() const					{ return mNetworkType; }
-
+	inline float GetThreshold() const							{ return mThreshold; }
+	
 	/**
- 	 * Retrieve a string describing the network name.
+	 * Set the confidence threshold used for classification.
+	 * Classes with a confidence below this threshold will be ignored.
+	 * @note this can also be set using the `--threshold=N` command-line argument.
 	 */
-	inline const char* GetNetworkName() const					{ return NetworkTypeToStr(mNetworkType); }
-
+	inline void SetThreshold( float threshold ) 					{ mThreshold = threshold; }
+	
 	/**
-	 * Load class descriptions from a label file.
+	 * Return the temporal smoothing weight or number of frames in the smoothing window.
+	 * @see SetSmoothing
 	 */
-	static bool LoadClassInfo( const char* filename, std::vector<std::string>& descriptions, int expectedClasses=-1 );
-
+	inline float GetSmoothing() const							{ return mSmoothingFactor; }
+	
 	/**
-	 * Load class descriptions and synset strings from a label file.
+	 * Enable temporal smoothing of the results using EWMA (exponentially-weighted moving average).
+	 * This filters the confidence values of each class over ~N frames to reduce noise and jitter.
+	 * In lieu of storing a history of past data, this uses an accumulated approximation of EMA:
+	 *
+	 *    EMA(x,t) = EMA(x, t-1) + w * (x - EMA(x, t-1))
+	 *
+	 * where x is a class softmax output logit, t is the timestep, and w is the smoothing weight.
+	 *
+	 * @param factor either a weight between [0,1] that's placed on the latest confidence values,
+	 *               or the smoothing window as a number of frames (where the weight will be 1/N).  
+	 *               For example, a factor of N=5 would average over approximately the last 5 frames,
+	 *               and would be equivalent to specifying a weight of 0.2 (either can be used).
+      *               A weight closer to 1 will be more responsive to changes, but also more noisy.	 
+	 *               Setting this to 0 or 1 will disable smoothing and use the unfiltered outputs.
+	 *
+	 * @note this can also be set using the `--smoothing=N` command-line argument.
 	 */
-	static bool LoadClassInfo( const char* filename, std::vector<std::string>& descriptions, std::vector<std::string>& synsets, int expectedClasses=-1 );
+	inline void SetSmoothing( float factor ) 					{ mSmoothingFactor = factor; }
 
 protected:
 	imageNet();
 	
-	int  Classify( float* confidence=NULL );
-	bool PreProcess( void* image, uint32_t width, uint32_t height, imageFormat format );
-	bool Process();
-
-	bool init( NetworkType networkType, uint32_t maxBatchSize, precisionType precision, deviceType device, bool allowGPUFallback );
+	//bool init( NetworkType networkType, uint32_t maxBatchSize, precisionType precision, deviceType device, bool allowGPUFallback );
 	bool init(const char* prototxt_path, const char* model_path, const char* mean_binary, const char* class_path, const char* input, const char* output, uint32_t maxBatchSize, precisionType precision, deviceType device, bool allowGPUFallback );
 	bool loadClassInfo( const char* filename, int expectedClasses=-1 );
 	
-	uint32_t mOutputClasses;
+	bool preProcess( void* image, uint32_t width, uint32_t height, imageFormat format );
+	
+	float* applySmoothing();
+	
+	uint32_t mNumClasses;
 	
 	std::vector<std::string> mClassSynset;	// 1000 class ID's (ie n01580077, n04325704)
 	std::vector<std::string> mClassDesc;
 
 	std::string mClassPath;
-	NetworkType mNetworkType;
+	//NetworkType mNetworkType;
+	
+	float* mSmoothingBuffer;
+	float  mSmoothingFactor;
+	
+	float mThreshold;
 };
 
 

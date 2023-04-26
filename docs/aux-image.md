@@ -30,7 +30,7 @@ For examples of using these functions, see [`cuda-examples.py`](https://github.c
 
 Although the [video streaming](aux-streaming#source-code) APIs and DNN objects (such [`imageNet`](c/imageNet.h), [`detectNet`](c/detectNet.h), and [`segNet`](c/segNet.h)) expect images in RGB/RGBA format, a variety of other formats are defined for sensor acquisition and low-level I/O:  
 
-|                 | Format string | [`imageFormat` enum](https://rawgit.com/dusty-nv/jetson-inference/dev/docs/html/group__imageFormat.html#ga931c48e08f361637d093355d64583406)   | Data Type | Bit Depth |
+|                 | Format string | [`imageFormat` enum](https://rawgit.com/dusty-nv/jetson-inference/master/docs/html/group__imageFormat.html#ga931c48e08f361637d093355d64583406)   | Data Type | Bit Depth |
 |-----------------|---------------|--------------------|-----------|-----------|
 | **RGB/RGBA**    | `rgb8`        | `IMAGE_RGB8`       | `uchar3`  | 24        |
 |                 | `rgba8`       | `IMAGE_RGBA8`      | `uchar4`  | 32        |
@@ -167,14 +167,15 @@ When you allocate an image in Python, or capture an image from a video feed with
 
 ```python
 <jetson.utils.cudaImage>
-  .ptr      # memory address (not typically used)
-  .size     # size in bytes
-  .shape    # (height,width,channels) tuple
-  .width    # width in pixels
-  .height   # height in pixels
-  .channels # number of color channels
-  .format   # format string
-  .mapped   # true if ZeroCopy
+  .ptr       # memory address (not typically used)
+  .size      # size in bytes
+  .shape     # (height,width,channels) tuple
+  .width     # width in pixels
+  .height    # height in pixels
+  .channels  # number of color channels
+  .format    # format string
+  .mapped    # true if ZeroCopy
+  .timestamp # timestamp in nanoseconds
 ```
 
 So you can do things like `img.width` and `img.height` to access properties about the image.

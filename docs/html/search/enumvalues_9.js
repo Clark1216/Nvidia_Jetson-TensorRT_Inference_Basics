@@ -1,13 +1,9 @@
 var searchData=
 [
-  ['model_5fcaffe',['MODEL_CAFFE',['../group__tensorNet.html#gga5d4597e0e7beae7133d542e220528725af850960ce09a0b0d4b38edef40e5d0e4',1,'tensorNet.h']]],
-  ['model_5fcustom',['MODEL_CUSTOM',['../group__tensorNet.html#gga5d4597e0e7beae7133d542e220528725aad94b3fe48299211488aae3c133721b1',1,'tensorNet.h']]],
-  ['model_5fengine',['MODEL_ENGINE',['../group__tensorNet.html#gga5d4597e0e7beae7133d542e220528725ad0f2ee11de0bfff76dace6976463556b',1,'tensorNet.h']]],
-  ['model_5fonnx',['MODEL_ONNX',['../group__tensorNet.html#gga5d4597e0e7beae7133d542e220528725a90e832c5673631bdfe24da7cd8eb52c9',1,'tensorNet.h']]],
-  ['model_5fuff',['MODEL_UFF',['../group__tensorNet.html#gga5d4597e0e7beae7133d542e220528725ad8c909322673d53ee28de66aa57bcccd',1,'tensorNet.h']]],
-  ['mouse_5fabsolute',['MOUSE_ABSOLUTE',['../group__OpenGL.html#ggadad47fc5cdbc7af41eee1991038749fea8de816dffb2b2835bd493047322de4d8',1,'glEvents.h']]],
-  ['mouse_5fbutton',['MOUSE_BUTTON',['../group__OpenGL.html#ggadad47fc5cdbc7af41eee1991038749fead81c1a06c50141d5a469d4513479c24c',1,'glEvents.h']]],
-  ['mouse_5fdrag',['MOUSE_DRAG',['../group__OpenGL.html#ggadad47fc5cdbc7af41eee1991038749fea387b8a2503db0238598215649168bed3',1,'glEvents.h']]],
-  ['mouse_5fmove',['MOUSE_MOVE',['../group__OpenGL.html#ggadad47fc5cdbc7af41eee1991038749fea7513d383f97428a41f8b44594874d469',1,'glEvents.h']]],
-  ['mouse_5fwheel',['MOUSE_WHEEL',['../group__OpenGL.html#ggadad47fc5cdbc7af41eee1991038749fea477b36ffc584a4458ea59eb24c7ea4cb',1,'glEvents.h']]]
+  ['needs_5fentity_5fprocessing_3476',['NEEDS_ENTITY_PROCESSING',['../classtinyxml2_1_1StrPair.html#a0301ef962e15dd94574431f1c61266c5a4f1e01a55f8efe4ca72c32d454060237',1,'tinyxml2::StrPair']]],
+  ['needs_5fnewline_5fnormalization_3477',['NEEDS_NEWLINE_NORMALIZATION',['../classtinyxml2_1_1StrPair.html#a0301ef962e15dd94574431f1c61266c5a8f2045d56e70745d718672c0da91d0e0',1,'tinyxml2::StrPair']]],
+  ['needs_5fwhitespace_5fcollapsing_3478',['NEEDS_WHITESPACE_COLLAPSING',['../classtinyxml2_1_1StrPair.html#a0301ef962e15dd94574431f1c61266c5a13996e9d4ed18fd2d6af59bbab291b63',1,'tinyxml2::StrPair']]],
+  ['none_3479',['NONE',['../group__objectTracker.html#addf4c9de2082c91d13179a66bb2b100ba7fea105b79354c240e099923c3372504',1,'objectTracker']]],
+  ['num_5fdevices_3480',['NUM_DEVICES',['../group__tensorNet.html#ggaa5d3f9981cdbd91516c1474006a80fe4a3025e0cdcbdfca820726c95f384ebf87',1,'tensorNet.h']]],
+  ['num_5fprecisions_3481',['NUM_PRECISIONS',['../group__tensorNet.html#ggaac6604fd52c6e5db82877390e0378623ad5386697191943144fa63df529e1a310',1,'tensorNet.h']]]
 ];

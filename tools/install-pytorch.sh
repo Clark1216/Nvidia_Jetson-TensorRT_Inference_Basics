@@ -138,7 +138,8 @@ function download_wheel()
 {
 	local filename=$2
 	local URL=$3
-
+	local sudo=${4:-""}
+	
 	download_file $filename $URL
 
 	local download_status=$?
@@ -148,7 +149,7 @@ function download_wheel()
 		return 1
 	fi
 
-	$1 install $filename
+	$sudo $1 install $filename
 
 	local install_status=$?
 
@@ -255,9 +256,9 @@ function install_pytorch()
 	
 	if [ $pytorch_version = "1.1.0" ]; then
 	
-		if [ $python_version == "python27" ]; then
+		if [ $python_version == "2.7" ]; then
 			install_pytorch_v110_python27_jp42
-		elif [ $python_version == "python36" ]; then
+		elif [ $python_version == "3.6" ]; then
 			install_pytorch_v110_python36_jp42
 		fi
 		
@@ -265,15 +266,15 @@ function install_pytorch()
 			
 		if [ $JETSON_L4T_RELEASE -eq 32 ]; then
 			if [ $JETSON_L4T_REVISION = "4.2" ]; then
-				if [ $python_version == "python27" ]; then	# JetPack 4.4 DP
+				if [ $python_version == "2.7" ]; then	# JetPack 4.4 DP
 					install_pytorch_v140_python27_jp44
-				elif [ $python_version == "python36" ]; then
+				elif [ $python_version == "3.6" ]; then
 					install_pytorch_v140_python36_jp44
 				fi
 			else
-				if [ $python_version == "python27" ]; then	# JetPack 4.2, 4.3
+				if [ $python_version == "2.7" ]; then	# JetPack 4.2, 4.3
 					install_pytorch_v140_python27_jp42
-				elif [ $python_version == "python36" ]; then
+				elif [ $python_version == "3.6" ]; then
 					install_pytorch_v140_python36_jp42
 				fi
 			fi
@@ -281,6 +282,8 @@ function install_pytorch()
 		
 	elif [ $pytorch_version = "1.6.0" ]; then
 		install_pytorch_v160_python36_jp44
+	elif [ $pytorch_version = "1.12.0" ]; then
+		install_pytorch_v1120_python38_jp50
 	else
 		echo "$LOG invalid PyTorch version selected:  PyTorch $pytorch_version"
 		exit_message 1
@@ -502,7 +505,8 @@ function install_pytorch_v140_python36_jp44()
 	# install pip packages
 	pip3 install Cython
 	pip3 install numpy --verbose
-
+	pip3 install tensorboard --verbose
+	
 	# install pytorch wheel
 	download_wheel pip3 "torch-1.4.0-cp36-cp36m-linux_aarch64.whl" "https://nvidia.box.com/shared/static/c3d7vm4gcs9m728j6o5vjay2jdedqb55.whl"
 
@@ -542,7 +546,8 @@ function install_pytorch_v160_python36_jp44()
 	# install pip packages
 	pip3 install Cython
 	pip3 install numpy --verbose
-
+	pip3 install tensorboard --verbose
+	
 	# install pytorch wheel
 	download_wheel pip3 "torch-1.6.0-cp36-cp36m-linux_aarch64.whl" "https://nvidia.box.com/shared/static/9eptse6jyly1ggt9axbja2yrmj6pbarc.whl"
 
@@ -567,6 +572,49 @@ function install_pytorch_v160_python36_jp44()
 	return 0
 }
 
+
+function install_pytorch_v1120_python38_jp50()
+{
+	echo "$LOG Downloading PyTorch v1.12.0 (Python 3.8)..."
+
+	# install apt packages
+	install_deb_package "python3-pip" FOUND_PIP3
+	install_deb_package "qtbase5-dev" FOUND_QT5
+	install_deb_package "libjpeg-dev" FOUND_JPEG
+	install_deb_package "zlib1g-dev" FOUND_ZLIB
+	install_deb_package "libopenblas-base" FOUND_OPENBLAS
+	install_deb_package "libopenmpi-dev" FOUND_OPENMPI
+	install_deb_package "libomp-dev" FOUND_OPENMP
+	install_deb_package "ninja-build" FOUND_NINJA
+	
+	# install pip packages
+	pip3 install Cython
+	pip3 install numpy --verbose
+	pip3 install tensorboard --verbose
+	
+	# install pytorch wheel
+	download_wheel pip3 "torch-1.12.0a0+2c916ef.nv22.3-cp38-cp38-linux_aarch64.whl" "https://developer.download.nvidia.com/compute/redist/jp/v50/pytorch/torch-1.12.0a0+2c916ef.nv22.3-cp38-cp38-linux_aarch64.whl" "sudo"
+
+	local wheel_status=$?
+
+	if [ $wheel_status != 0 ]; then
+		echo "$LOG failed to install PyTorch v1.12.0 (Python 3.8)"
+		return 1
+	fi
+
+	# build torchvision
+	move_ffmpeg
+	echo "$LOG cloning torchvision..."
+	sudo rm -r -f torchvision-38
+	git clone -bv0.12.0 --depth=1 https://github.com/pytorch/vision torchvision-38
+	cd torchvision-38
+	echo "$LOG building torchvision for Python 3.8..."
+	sudo python3 setup.py install
+	cd ../
+	restore_ffmpeg
+
+	return 0
+}
 
 #
 # check L4T version
@@ -656,6 +704,7 @@ check_L4T_version
 while true; do
 
 	HAS_PYTHON2=true
+	PYTHON3_VERSION="3.6"
 	
 	if [ $JETSON_L4T_RELEASE -eq 32 ]; then
 		if [ $JETSON_L4T_REVISION = "4.3" ] || [ $JETSON_L4T_REVISION_MAJOR -gt 4 ]; then
@@ -669,11 +718,16 @@ while true; do
 		else
 			PYTORCH_VERSION="1.4.0"	# JetPack 4.2, 4.3
 		fi
+	elif [[ $JETSON_L4T_RELEASE -eq 34 || $JETSON_L4T_RELEASE -eq 35 ]]; then
+		# JetPack 5.x
+		PYTORCH_VERSION="1.12.0"
+		PYTHON3_VERSION="3.8"
+		HAS_PYTHON2=false
 	fi
 
      if [ "$HAS_PYTHON2" = true ]; then
-		PYTHON_VERSION_ONE="python27"
-		PYTHON_VERSION_TWO="python36"
+		PYTHON_VERSION_ONE="2.7"
+		PYTHON_VERSION_TWO=$PYTHON3_VERSION
 		
 		packages_selected=$(dialog --backtitle "$APP_TITLE" \
 						  --title "PyTorch Installer (L4T R$JETSON_L4T_VERSION)" \
@@ -681,11 +735,11 @@ while true; do
 						  --colors \
 						  --checklist "If you want to train DNN models on your Jetson, this tool will download and install PyTorch.  Select the desired versions of pre-built packages below, or see \Zbhttp://eLinux.org/Jetson_Zoo\Zn for instructions to build from source. \n\nYou can skip this step and select Skip if you don't want to install PyTorch.\n\n\ZbKeys:\Zn\n  ↑↓ Navigate Menu\n  Space to Select \n  Enter to Continue\n\n\ZbPackages to Install:\Zn" 20 80 2 \
 						  --output-fd 1 \
-						  1 "PyTorch $PYTORCH_VERSION for Python 2.7" off \
-						  2 "PyTorch $PYTORCH_VERSION for Python 3.6" off \
+						  1 "PyTorch $PYTORCH_VERSION for Python $PYTHON_VERSION_ONE" off \
+						  2 "PyTorch $PYTORCH_VERSION for Python $PYTHON_VERSION_TWO" off \
 						 )
 	else
-		PYTHON_VERSION_ONE="python36"
+		PYTHON_VERSION_ONE=$PYTHON3_VERSION
 		
 		packages_selected=$(dialog --backtitle "$APP_TITLE" \
 						  --title "PyTorch Installer (L4T R$JETSON_L4T_VERSION)" \
@@ -693,7 +747,7 @@ while true; do
 						  --colors \
 						  --checklist "If you want to train DNN models on your Jetson, this tool will download and install PyTorch.  Select the desired versions of pre-built packages below, or see \Zbhttp://eLinux.org/Jetson_Zoo\Zn for instructions to build from source. \n\nYou can skip this step and select Skip if you don't want to install PyTorch.\n\n\ZbKeys:\Zn\n  ↑↓ Navigate Menu\n  Space to Select \n  Enter to Continue\n\n\ZbPackages to Install:\Zn" 20 80 1 \
 						  --output-fd 1 \
-						  1 "PyTorch $PYTORCH_VERSION for Python 3.6" off \
+						  1 "PyTorch $PYTORCH_VERSION for Python $PYTHON_VERSION_ONE" off \
 						 )
 	fi
 	

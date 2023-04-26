@@ -83,11 +83,8 @@ static int PyPoseKeypoint_Init( PyPoseKeypoint_Object* self, PyObject *args, PyO
 	static char* kwlist[] = {"id", "x", "y", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "|iff", kwlist, &id, &x, &y))
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "poseNet.ObjectPose.Keypoint.__init()__ failed to parse arguments");
 		return -1;
-	}
-	
+
 	if( id < 0 )
 	{
 		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "invalid keypoint ID was < 0");
@@ -301,11 +298,8 @@ static int PyObjectPose_Init( PyObjectPose_Object* self, PyObject *args, PyObjec
 	static char* kwlist[] = {"id", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "|i", kwlist, &id))
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "poseNet.ObjectPose.__init()__ failed to parse arguments");
 		return -1;
-	}
-	
+
 	if( id < 0 )
 	{
 		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "invalid object pose ID was < 0");
@@ -683,10 +677,7 @@ static PyObject* PyObjectPose_FindKeypoint( PyObjectPose_Object* self, PyObject 
 			const char* name = NULL;
 
 			if( !PyArg_ParseTuple(args, "s", &name) )
-			{
-				PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "poseNet.ObjectPose.FindKeypoint() failed to parse arguments");
 				return NULL;
-			}
 			
 			id = self->net->FindKeypointID(name);
 			
@@ -733,11 +724,8 @@ static PyObject* PyObjectPose_FindLink( PyObjectPose_Object* self, PyObject *arg
 			const char* name_b = NULL;
 			
 			if( !PyArg_ParseTuple(args, "ss", &name_a, &name_b) )
-			{
-				PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "poseNet.ObjectPose.FindLink() failed to parse arguments");
 				return NULL;
-			}
-			
+
 			a = self->net->FindKeypointID(name_a);
 			b = self->net->FindKeypointID(name_b);
 			
@@ -825,11 +813,8 @@ static int PyPoseNet_Init( PyPoseNet_Object* self, PyObject *args, PyObject *kwd
 	static char* kwlist[] = {"network", "argv", "threshold", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "|sOf", kwlist, &network, &argList, &threshold))
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "poseNet.__init()__ failed to parse arguments");
 		return -1;
-	}
-    
+
 	// determine whether to use argv or built-in network
 	if( argList != NULL && PyList_Check(argList) && PyList_Size(argList) > 0 )
 	{
@@ -866,8 +851,10 @@ static int PyPoseNet_Init( PyPoseNet_Object* self, PyObject *args, PyObject *kwd
 		}
 
 		// load the network using (argc, argv)
+		Py_BEGIN_ALLOW_THREADS
 		self->net = poseNet::Create(argc, argv);
-
+		Py_END_ALLOW_THREADS
+		
 		// set the threshold
 		self->net->SetThreshold(threshold);
 		
@@ -876,27 +863,15 @@ static int PyPoseNet_Init( PyPoseNet_Object* self, PyObject *args, PyObject *kwd
 	}
 	else
 	{
-		LogVerbose(LOG_PY_INFERENCE "poseNet loading build-in network '%s'\n", network);
-		
-		// parse the selected built-in network
-		poseNet::NetworkType networkType = poseNet::NetworkTypeFromStr(network);
-		
-		if( networkType == poseNet::CUSTOM )
-		{
-			PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "poseNet invalid built-in network was requested");
-			LogError(LOG_PY_INFERENCE "poseNet invalid built-in network was requested ('%s')\n", network);
-			return -1;
-		}
-		
-		// load the built-in network
-		self->net = poseNet::Create(networkType, threshold);
+		Py_BEGIN_ALLOW_THREADS
+		self->net = poseNet::Create(network, threshold);
+		Py_END_ALLOW_THREADS
 	}
 
 	// confirm the network loaded
 	if( !self->net )
 	{
 		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "poseNet failed to load network");
-		LogError(LOG_PY_INFERENCE "poseNet failed to load network\n");
 		return -1;
 	}
 
@@ -943,10 +918,7 @@ static PyObject* PyPoseNet_Process( PyPoseNet_Object* self, PyObject* args, PyOb
 	static char* kwlist[] = {"image", "overlay", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "O|s", kwlist, &capsule, &overlay))
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "poseNet.Process() failed to parse arguments");
 		return NULL;
-	}
 
 	// get pointer to image data
 	PyCudaImage* img = PyCUDA_GetImage(capsule);
@@ -957,7 +929,12 @@ static PyObject* PyPoseNet_Process( PyPoseNet_Object* self, PyObject* args, PyOb
 	// run the pose estimation
 	std::vector<poseNet::ObjectPose> poses;
 
-	if( !self->net->Process(img->base.ptr, img->width, img->height, img->format, poses, poseNet::OverlayFlagsFromStr(overlay)) )
+	bool result = false;
+	Py_BEGIN_ALLOW_THREADS
+	result = self->net->Process(img->base.ptr, img->width, img->height, img->format, poses, poseNet::OverlayFlagsFromStr(overlay));
+	Py_END_ALLOW_THREADS
+	
+	if( !result )
 	{
 		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "poseNet.Process() encountered an error processing the image");
 		return NULL;
@@ -1013,11 +990,8 @@ static PyObject* PyPoseNet_Overlay( PyPoseNet_Object* self, PyObject* args, PyOb
 	static char* kwlist[] = {"input", "poses", "overlay", "output", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "OO|sO", kwlist, &input_capsule, &poses, &overlay, &output_capsule))
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "poseNet.Overlay() failed to parse arguments");
 		return NULL;
-	}
-	
+
 	if( !output_capsule )
 		output_capsule = input_capsule;
 
@@ -1066,14 +1040,21 @@ static PyObject* PyPoseNet_Overlay( PyPoseNet_Object* self, PyObject* args, PyOb
 	}
 
 	// perform the overlay operation
-	if( !self->net->Overlay(input_img->base.ptr, output_img->base.ptr, 
+	bool result = false;
+	Py_BEGIN_ALLOW_THREADS
+	
+	result = self->net->Overlay(input_img->base.ptr, output_img->base.ptr, 
 					    input_img->width, input_img->height, input_img->format, 
-					    objectPoses, poseNet::OverlayFlagsFromStr(overlay)) ) 
+					    objectPoses, poseNet::OverlayFlagsFromStr(overlay));
+
+	Py_END_ALLOW_THREADS
+	
+	if( !result ) 
 	{
 		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "poseNet.Overlay() encountered an error");
 		return NULL;
 	}
-
+	
 	Py_RETURN_NONE;
 }
 
@@ -1159,11 +1140,8 @@ PyObject* PyPoseNet_GetKeypointName( PyPoseNet_Object* self, PyObject* args )
 	int idx = 0;
 
 	if( !PyArg_ParseTuple(args, "i", &idx) )
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "poseNet.GetKeypointName() failed to parse arguments");
 		return NULL;
-	}
-		
+
 	if( idx < 0 || idx >= self->net->GetNumKeypoints() )
 	{
 		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "requested keypoint index is out of bounds");
@@ -1192,11 +1170,8 @@ PyObject* PyPoseNet_FindKeypointID( PyPoseNet_Object* self, PyObject* args )
 	const char* keypointName = NULL;
 
 	if( !PyArg_ParseTuple(args, "s", &keypointName) )
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "poseNet.FindKeypointID() failed to parse arguments");
 		return NULL;
-	}
-		
+
 	const int keypointID = self->net->FindKeypointID(keypointName);
 	
 	if( keypointID < 0 )
@@ -1230,11 +1205,8 @@ PyObject* PyPoseNet_SetKeypointAlpha( PyPoseNet_Object* self, PyObject* args, Py
 	static char* kwlist[] = {"alpha", "keypoint", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "f|i", kwlist, &alpha) )
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "poseNet.SetKeypointAlpha() failed to parse arguments");
 		return NULL;
-	}
-		
+
 	if( alpha < 0.0f || alpha > 255.0f )
 	{
 		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "poseNet.SetKeypointAlpha() -- provided alpha value is out-of-range");
@@ -1287,10 +1259,7 @@ PyObject* PyPoseNet_SetKeypointScale( PyPoseNet_Object* self, PyObject* args, Py
 	static char* kwlist[] = {"scale", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "f", kwlist, &scale) )
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "poseNet.SetKeypointScale() failed to parse arguments");
 		return NULL;
-	}
 
 	self->net->SetKeypointScale(scale);
 	Py_RETURN_NONE;
@@ -1334,10 +1303,7 @@ PyObject* PyPoseNet_SetLinkScale( PyPoseNet_Object* self, PyObject* args, PyObje
 	static char* kwlist[] = {"scale", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "f", kwlist, &scale) )
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "poseNet.SetLinkScale() failed to parse arguments");
 		return NULL;
-	}
 
 	self->net->SetLinkScale(scale);
 	Py_RETURN_NONE;

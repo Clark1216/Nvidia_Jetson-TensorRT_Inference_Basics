@@ -56,18 +56,18 @@ DETECTION_DIR="python/training/detection/ssd"
 DOCKER_ROOT="/jetson-inference"	# where the project resides inside docker
 
 # check if we need to download models
-SIZE_MODELS=$(du -sb $NETWORKS_DIR | cut -f 1)  
+#SIZE_MODELS=$(du -sb $NETWORKS_DIR | cut -f 1)  
 
-echo "size of $NETWORKS_DIR:  $SIZE_MODELS bytes"
+#echo "size of $NETWORKS_DIR:  $SIZE_MODELS bytes"
   
-if [[ $SIZE_MODELS -lt 204800 ]]; then  # some text files come with the repo (~78KB), so check for a bit more than that
-	sudo apt-get update
-	sudo apt-get install dialog
-	echo "Models have not yet been downloaded, running model downloader tool now..."
-	cd tools
-	./download-models.sh
-	cd ../
-fi
+#if [[ $SIZE_MODELS -lt 204800 ]]; then  # some text files come with the repo (~78KB), so check for a bit more than that
+#	sudo apt-get update
+#	sudo apt-get install dialog
+#	echo "Models have not yet been downloaded, running model downloader tool now..."
+#	cd tools
+#	./download-models.sh
+#	cd ../
+#fi
 
 # check for pytorch-ssd base model
 SSD_BASE_MODEL="$DETECTION_DIR/models/mobilenet-v1-ssd-mp-0_675.pth"
@@ -145,10 +145,10 @@ while :; do
     shift
 done
 
-echo "CONTAINER:     $CONTAINER_IMAGE"
-echo "DATA_VOLUME:   $DATA_VOLUME"
-echo "USER_VOLUME:   $USER_VOLUME"
-echo "USER_COMMAND:  $USER_COMMAND"
+echo "CONTAINER:      $CONTAINER_IMAGE"
+echo "DATA_VOLUME:    $DATA_VOLUME"
+echo "USER_VOLUME:    $USER_VOLUME"
+echo "USER_COMMAND:   $USER_COMMAND"
 
 # check for V4L2 devices
 V4L2_DEVICES=" "
@@ -162,13 +162,43 @@ done
 
 echo "V4L2_DEVICES:  $V4L2_DEVICES"
 
-# run the container
-sudo xhost +si:localuser:root
+# check for display
+DISPLAY_DEVICE=" "
 
-sudo docker run --runtime nvidia -it --rm --security-opt  seccomp=unconfined --network host -e DISPLAY=$DISPLAY \
-    -v /tmp/.X11-unix/:/tmp/.X11-unix \
-    -v /tmp/argus_socket:/tmp/argus_socket \
-    -v /etc/enctune.conf:/etc/enctune.conf \
-    $V4L2_DEVICES $DATA_VOLUME $USER_VOLUME \
-    $CONTAINER_IMAGE $USER_COMMAND
+if [ -n "$DISPLAY" ]; then
+	sudo xhost +si:localuser:root
+	DISPLAY_DEVICE="-e DISPLAY=$DISPLAY -v /tmp/.X11-unix/:/tmp/.X11-unix"
+fi
+
+echo "DISPLAY_DEVICE: $DISPLAY_DEVICE"
+
+# run the container
+if [ $ARCH = "aarch64" ]; then
+
+	# /proc or /sys files aren't mountable into docker
+	cat /proc/device-tree/model > /tmp/nv_jetson_model
+	
+	sudo docker run --runtime nvidia -it --rm \
+		--network host \
+		-v /tmp/argus_socket:/tmp/argus_socket \
+		-v /etc/enctune.conf:/etc/enctune.conf \
+		-v /etc/nv_tegra_release:/etc/nv_tegra_release \
+		-v /tmp/nv_jetson_model:/tmp/nv_jetson_model \
+		$DISPLAY_DEVICE $V4L2_DEVICES \
+		$DATA_VOLUME $USER_VOLUME \
+		$CONTAINER_IMAGE $USER_COMMAND
+    
+elif [ $ARCH = "x86_64" ]; then
+
+	sudo docker run --gpus all -it --rm \
+		--network=host \
+		--shm-size=8g \
+		--ulimit memlock=-1 \
+		--ulimit stack=67108864 \
+		-e NVIDIA_DRIVER_CAPABILITIES=all \
+		$DISPLAY_DEVICE $V4L2_DEVICES \
+		$DATA_VOLUME $USER_VOLUME \
+		$CONTAINER_IMAGE $USER_COMMAND
+		
+fi
 

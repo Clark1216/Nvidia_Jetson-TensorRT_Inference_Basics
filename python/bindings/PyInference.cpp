@@ -28,6 +28,8 @@
 #include "PyDetectNet.h"
 #include "PyPoseNet.h"
 #include "PySegNet.h"
+#include "PyActionNet.h"
+#include "PyBackgroundNet.h"
 
 #include "logging.h"
 
@@ -61,6 +63,12 @@ bool PyInference_Register( PyObject* module )
 	if( !PySegNet_Register(module) )
 		LogError(LOG_PY_INFERENCE "failed to register segNet type\n");
 
+	if( !PyActionNet_Register(module) )
+		LogError(LOG_PY_INFERENCE "failed to register actionNet type\n");
+	
+	if( !PyBackgroundNet_Register(module) )
+		LogError(LOG_PY_INFERENCE "failed to register backgroundNet type\n");
+	
 	LogDebug(LOG_PY_INFERENCE "done registering module types\n");
 	return true;
 }

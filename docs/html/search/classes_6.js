@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['joystickdevice',['JoystickDevice',['../classJoystickDevice.html',1,'']]]
+  ['httproute_1870',['HttpRoute',['../structWebRTCServer_1_1HttpRoute.html',1,'WebRTCServer']]]
 ];

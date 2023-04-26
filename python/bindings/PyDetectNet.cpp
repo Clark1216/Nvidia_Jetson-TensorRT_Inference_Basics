@@ -24,6 +24,8 @@
 #include "PyDetectNet.h"
 
 #include "detectNet.h"
+#include "objectTrackerIOU.h"
+
 #include "logging.h"
 
 #include "../../utils/python/bindings/PyCUDA.h"
@@ -38,28 +40,36 @@ typedef struct {
 #define DOC_DETECTION "Object Detection Result\n\n" \
 				  "----------------------------------------------------------------------\n" \
 				  "Data descriptors defined here:\n\n" \
-				  "Area\n" \
-				  "    Area of bounding box\n\n" \
-				  "Bottom\n" \
-				  "    Bottom bounding box coordinate\n\n" \
-				  "Center\n" \
-				  "    Center (x,y) coordinate of bounding box\n\n" \
-				  "ClassID\n" \
-				  "    Class index of the detected object\n\n" \
 				  "Confidence\n" \
 				  "    Confidence value of the detected object\n\n" \
+				  "ClassID\n" \
+				  "    Class index of the detected object\n\n" \
+				  "TrackID\n" \
+				  "    Unique tracking ID (or -1 if untracked)\n\n" \
+				  "TrackStatus\n" \
+				  "    -1 for dropped, 0 for initializing, 1 for active/valid\n\n" \
+				  "TrackFrames\n" \
+				  "    The number of frames the object has been re-identified for\n\n" \
+				  "TrackLost\n" \
+				  "    The number of consecutive frames tracking has been lost for\n\n" \
+				  "Width\n" \
+				  "     Width of bounding box\n\n" \
 				  "Height\n" \
 				  "    Height of bounding box\n\n" \
-				  "Instance\n" \
-				  "    Instance index of the detected object\n\n" \
 				  "Left\n" \
 				  "    Left bounding box coordinate\n\n" \
 				  "Right\n" \
 				  "    Right bounding box coordinate\n\n" \
 				  "Top\n" \
 				  "    Top bounding box coordinate\n\n" \
-				  "Width\n" \
-				  "     Width of bounding box\n\n"
+				  "Bottom\n" \
+				  "    Bottom bounding box coordinate\n\n" \
+				  "ROI\n" \
+				  "    (Left, Top, Right, Bottom) tuple\n\n" \
+				  "Center\n" \
+				  "    Center (x,y) coordinate tuple\n\n" \
+				  "Area\n" \
+				  "    Area of bounding box\n\n"
 
 // New
 static PyObject* PyDetection_New( PyTypeObject* type, PyObject* args, PyObject* kwds )
@@ -79,7 +89,6 @@ static PyObject* PyDetection_New( PyTypeObject* type, PyObject* args, PyObject* 
 	return (PyObject*)self;
 }
 
-
 // Init
 static int PyDetection_Init( PyDetection_Object* self, PyObject* args, PyObject* kwds )
 {
@@ -96,11 +105,8 @@ static int PyDetection_Init( PyDetection_Object* self, PyObject* args, PyObject*
 
 	static char* kwlist[] = {"classID", "confidence", "left", "top", "right", "bottom", NULL};
 
-	if( !PyArg_ParseTupleAndKeywords(args, kwds, "|iffff", kwlist, &classID, &conf, &left, &top, &right, &bottom))
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet.Detection.__init()__ failed to parse args tuple");
+	if( !PyArg_ParseTupleAndKeywords(args, kwds, "|ifffff", kwlist, &classID, &conf, &left, &top, &right, &bottom))
 		return -1;
-	}
   
 	if( classID < 0 )	
 		classID = 0;
@@ -116,7 +122,6 @@ static int PyDetection_Init( PyDetection_Object* self, PyObject* args, PyObject*
 	return 0;
 }
 
-
 // Deallocate
 static void PyDetection_Dealloc( PyDetection_Object* self )
 {
@@ -125,7 +130,6 @@ static void PyDetection_Dealloc( PyDetection_Object* self )
 	// free the container
 	Py_TYPE(self)->tp_free((PyObject*)self);
 }
-
 
 // ToString
 static PyObject* PyDetection_ToString( PyDetection_Object* self )
@@ -137,27 +141,52 @@ static PyObject* PyDetection_ToString( PyDetection_Object* self )
 	self->det.Center(&cx, &cy);
 
 	// format string
-	char str[1024];
+	char str[4096];
 
-	sprintf(str, 
-		   "<detectNet.Detection object>\n"
-		   "   -- ClassID: %i\n"
-		   "   -- Confidence: %g\n"
-		   "   -- Left:    %g\n"
-		   "   -- Top:     %g\n"
-		   "   -- Right:   %g\n"
-		   "   -- Bottom:  %g\n"
-		   "   -- Width:   %g\n"
-		   "   -- Height:  %g\n"
-		   "   -- Area:    %g\n"
-		   "   -- Center:  (%g, %g)",
-		   self->det.ClassID, self->det.Confidence, 
-		   self->det.Left, self->det.Top, self->det.Right, self->det.Bottom,
-		   self->det.Width(), self->det.Height(), self->det.Area(), cx, cy);
-
+	if( self->det.TrackID >= 0 )
+	{
+		sprintf(str, 
+			   "<detectNet.Detection object>\n"
+			   "   -- Confidence:  %g\n"
+			   "   -- ClassID:     %i\n"
+			   "   -- TrackID:     %i\n"
+			   "   -- TrackStatus: %i\n"
+			   "   -- TrackFrames: %i\n"
+			   "   -- TrackLost:   %i\n"
+			   "   -- Left:    %g\n"
+			   "   -- Top:     %g\n"
+			   "   -- Right:   %g\n"
+			   "   -- Bottom:  %g\n"
+			   "   -- Width:   %g\n"
+			   "   -- Height:  %g\n"
+			   "   -- Area:    %g\n"
+			   "   -- Center:  (%g, %g)",
+			   self->det.Confidence, self->det.ClassID,  
+			   self->det.TrackID, self->det.TrackStatus, self->det.TrackFrames, self->det.TrackLost,
+			   self->det.Left, self->det.Top, self->det.Right, self->det.Bottom,
+			   self->det.Width(), self->det.Height(), self->det.Area(), cx, cy);
+	}
+	else
+	{
+		sprintf(str, 
+			   "<detectNet.Detection object>\n"
+			   "   -- Confidence: %g\n"
+			   "   -- ClassID: %i\n"
+			   "   -- Left:    %g\n"
+			   "   -- Top:     %g\n"
+			   "   -- Right:   %g\n"
+			   "   -- Bottom:  %g\n"
+			   "   -- Width:   %g\n"
+			   "   -- Height:  %g\n"
+			   "   -- Area:    %g\n"
+			   "   -- Center:  (%g, %g)",
+			   self->det.Confidence, self->det.ClassID,  
+			   self->det.Left, self->det.Top, self->det.Right, self->det.Bottom,
+			   self->det.Width(), self->det.Height(), self->det.Area(), cx, cy);
+	}
+	
 	return PYSTRING_FROM_STRING(str);
 }
-
 
 // Contains
 static PyObject* PyDetection_Contains( PyDetection_Object* self, PyObject *args, PyObject *kwds )
@@ -175,42 +204,34 @@ static PyObject* PyDetection_Contains( PyDetection_Object* self, PyObject *args,
 	static char* kwlist[] = {"x", "y", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "ff", kwlist, &x, &y))
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet.Detection.Contains() failed to parse args tuple");
 		return NULL;
-	}
 
 	PY_RETURN_BOOL(self->det.Contains(x,y));
 }
 
-
-// GetInstance
-static PyObject* PyDetection_GetInstance( PyDetection_Object* self, void* closure )
+// GetConfidence
+static PyObject* PyDetection_GetConfidence( PyDetection_Object* self, void* closure )
 {
-	return PYLONG_FROM_UNSIGNED_LONG(self->det.Instance);
+	return PyFloat_FromDouble(self->det.Confidence);
 }
 
-// SetInstance
-static int PyDetection_SetInstance( PyDetection_Object* self, PyObject* value, void* closure )
+// SetConfidence
+static int PyDetection_SetConfidence( PyDetection_Object* self, PyObject* value, void* closure )
 {
 	if( !value )
 	{
-		PyErr_SetString(PyExc_TypeError, LOG_PY_INFERENCE "Not permitted to delete detectNet.Detection.Instance attribute");
+		PyErr_SetString(PyExc_TypeError, LOG_PY_INFERENCE "Not permitted to delete detectNet.Detection.Confidence attribute");
 		return -1;
 	}
 
-	int arg = PYLONG_AS_LONG(value);
+	const double arg = PyFloat_AsDouble(value);
 
 	if( PyErr_Occurred() != NULL )
 		return -1;
 
-	if( arg < 0 )
-		arg = 0;
-
-	self->det.Instance = arg;
+	self->det.Confidence = arg;
 	return 0;
 }
-
 
 // GetClassID
 static PyObject* PyDetection_GetClassID( PyDetection_Object* self, void* closure )
@@ -239,33 +260,101 @@ static int PyDetection_SetClassID( PyDetection_Object* self, PyObject* value, vo
 	return 0;
 }
 
-
-
-// GetConfidence
-static PyObject* PyDetection_GetConfidence( PyDetection_Object* self, void* closure )
+// GetTrackID
+static PyObject* PyDetection_GetTrackID( PyDetection_Object* self, void* closure )
 {
-	return PyFloat_FromDouble(self->det.Confidence);
+	return PYLONG_FROM_LONG(self->det.TrackID);
 }
 
-// SetLeft
-static int PyDetection_SetConfidence( PyDetection_Object* self, PyObject* value, void* closure )
+// SetTrackID
+static int PyDetection_SetTrackID( PyDetection_Object* self, PyObject* value, void* closure )
 {
 	if( !value )
 	{
-		PyErr_SetString(PyExc_TypeError, LOG_PY_INFERENCE "Not permitted to delete detectNet.Detection.Confidence attribute");
+		PyErr_SetString(PyExc_TypeError, LOG_PY_INFERENCE "Not permitted to delete detectNet.Detection.TrackID attribute");
 		return -1;
 	}
 
-	const double arg = PyFloat_AsDouble(value);
+	int arg = PYLONG_AS_LONG(value);
 
 	if( PyErr_Occurred() != NULL )
 		return -1;
 
-	self->det.Confidence = arg;
+	self->det.TrackID = arg;
 	return 0;
 }
 
+// GetTrackStatus
+static PyObject* PyDetection_GetTrackStatus( PyDetection_Object* self, void* closure )
+{
+	return PYLONG_FROM_LONG(self->det.TrackStatus);
+}
 
+// SetTrackStatus
+static int PyDetection_SetTrackStatus( PyDetection_Object* self, PyObject* value, void* closure )
+{
+	if( !value )
+	{
+		PyErr_SetString(PyExc_TypeError, LOG_PY_INFERENCE "Not permitted to delete detectNet.Detection.TrackStatus attribute");
+		return -1;
+	}
+
+	int arg = PYLONG_AS_LONG(value);
+
+	if( PyErr_Occurred() != NULL )
+		return -1;
+
+	self->det.TrackStatus = arg;
+	return 0;
+}
+
+// GetTrackFrames
+static PyObject* PyDetection_GetTrackFrames( PyDetection_Object* self, void* closure )
+{
+	return PYLONG_FROM_LONG(self->det.TrackFrames);
+}
+
+// SetTrackFrames
+static int PyDetection_SetTrackFrames( PyDetection_Object* self, PyObject* value, void* closure )
+{
+	if( !value )
+	{
+		PyErr_SetString(PyExc_TypeError, LOG_PY_INFERENCE "Not permitted to delete detectNet.Detection.TrackFrames attribute");
+		return -1;
+	}
+
+	int arg = PYLONG_AS_LONG(value);
+
+	if( PyErr_Occurred() != NULL )
+		return -1;
+
+	self->det.TrackFrames = arg;
+	return 0;
+}
+
+// GetTrackLost
+static PyObject* PyDetection_GetTrackLost( PyDetection_Object* self, void* closure )
+{
+	return PYLONG_FROM_LONG(self->det.TrackLost);
+}
+
+// SetTrackLost
+static int PyDetection_SetTrackLost( PyDetection_Object* self, PyObject* value, void* closure )
+{
+	if( !value )
+	{
+		PyErr_SetString(PyExc_TypeError, LOG_PY_INFERENCE "Not permitted to delete detectNet.Detection.TrackLost attribute");
+		return -1;
+	}
+
+	int arg = PYLONG_AS_LONG(value);
+
+	if( PyErr_Occurred() != NULL )
+		return -1;
+
+	self->det.TrackLost = arg;
+	return 0;
+}
 
 // GetLeft
 static PyObject* PyDetection_GetLeft( PyDetection_Object* self, void* closure )
@@ -291,7 +380,6 @@ static int PyDetection_SetLeft( PyDetection_Object* self, PyObject* value, void*
 	return 0;
 }
 
-
 // GetRight
 static PyObject* PyDetection_GetRight( PyDetection_Object* self, void* closure )
 {
@@ -315,7 +403,6 @@ static int PyDetection_SetRight( PyDetection_Object* self, PyObject* value, void
 	self->det.Right = arg;
 	return 0;
 }
-
 
 // GetTop
 static PyObject* PyDetection_GetTop( PyDetection_Object* self, void* closure )
@@ -341,14 +428,13 @@ static int PyDetection_SetTop( PyDetection_Object* self, PyObject* value, void* 
 	return 0;
 }
 
-
 // GetBottom
 static PyObject* PyDetection_GetBottom( PyDetection_Object* self, void* closure )
 {
 	return PyFloat_FromDouble(self->det.Bottom);
 }
 
-// SetTop
+// SetBottom
 static int PyDetection_SetBottom( PyDetection_Object* self, PyObject* value, void* closure )
 {
 	if( !value )
@@ -365,7 +451,6 @@ static int PyDetection_SetBottom( PyDetection_Object* self, PyObject* value, voi
 	self->det.Bottom = arg;
 	return 0;
 }
-
 
 // GetWidth
 static PyObject* PyDetection_GetWidth( PyDetection_Object* self, void* closure )
@@ -425,8 +510,12 @@ static PyObject* PyDetection_GetROI( PyDetection_Object* self, void* closure )
 
 static PyGetSetDef pyDetection_GetSet[] = 
 {
-	{ "Instance", (getter)PyDetection_GetInstance, (setter)PyDetection_SetInstance, "Instance index of the detected object", NULL},
 	{ "ClassID", (getter)PyDetection_GetClassID, (setter)PyDetection_SetClassID, "Class index of the detected object", NULL},
+	{ "TrackID", (getter)PyDetection_GetTrackID, (setter)PyDetection_SetTrackID, "Unique tracking ID (-1 if untracked)", NULL},
+	{ "TrackStatus", (getter)PyDetection_GetTrackStatus, (setter)PyDetection_SetTrackStatus, "-1 for dropped, 0 for initializing, 1 for active/valid", NULL},
+	{ "TrackFrames", (getter)PyDetection_GetTrackFrames, (setter)PyDetection_SetTrackFrames, "The number of frames the object has been re-identified for", NULL},
+	{ "TrackLost", (getter)PyDetection_GetTrackLost, (setter)PyDetection_SetTrackLost, "The number of consecutive frames tracking has been lost for", NULL},
+	{ "Instance", (getter)PyDetection_GetTrackID, (setter)PyDetection_SetTrackID, "Unique tracking ID (-1 if untracked)", NULL}, // legacy
 	{ "Confidence", (getter)PyDetection_GetConfidence, (setter)PyDetection_SetConfidence, "Confidence value of the detected object", NULL},
 	{ "Left", (getter)PyDetection_GetLeft, (setter)PyDetection_SetLeft, "Left bounding box coordinate", NULL},
 	{ "Right", (getter)PyDetection_GetRight, (setter)PyDetection_SetRight, "Right bounding box coordinate", NULL},
@@ -462,8 +551,7 @@ typedef struct {
 
 #define DOC_DETECTNET "Object Detection DNN - locates objects in an image\n\n" \
 				  "Examples (jetson-inference/python/examples)\n" \
-                      "     detectnet-console.py\n" \
-				  "     detectnet-camera.py\n\n" \
+                      "     detectnet.py\n\n" \
 				  "__init__(...)\n" \
 				  "     Loads an object detection model.\n\n" \
 				  "     Parameters:\n" \
@@ -473,8 +561,14 @@ typedef struct {
 				  "                         see below for available options.\n\n" \
 				  "       threshold (float) -- minimum detection threshold.\n" \
 				  "                            default value is 0.5\n\n" \
+				  "     Extended parameters for loading custom models:\n" \
+				  "       model (string) -- path to self-trained ONNX model to load.\n\n" \
+				  "       labels (string) -- path to labels.txt file (optional)\n\n" \
+				  "       colors (string) -- path to colors.txt file (optional)\n\n" \
+				  "       input_blob (string) -- name of the input layer of the model.\n\n" \
+				  "       output_cvg (string) -- name of the output coverage/confidence layer.\n\n" \
+				  "       output_bbox (string) -- name of the output bounding boxes layer.\n\n" \
  				  DETECTNET_USAGE_STRING
-
 
 // Init
 static int PyDetectNet_Init( PyDetectNet_Object* self, PyObject *args, PyObject *kwds )
@@ -482,17 +576,22 @@ static int PyDetectNet_Init( PyDetectNet_Object* self, PyObject *args, PyObject 
 	LogDebug(LOG_PY_INFERENCE "PyDetectNet_Init()\n");
 	
 	// parse arguments
-	PyObject* argList     = NULL;
-	const char* network   = "ssd-mobilenet-v2";
-	float threshold       = DETECTNET_DEFAULT_THRESHOLD;
+	PyObject* argList = NULL;
 
-	static char* kwlist[] = {"network", "argv", "threshold", NULL};
+	const char* network     = "ssd-mobilenet-v2";
+	const char* model       = NULL;
+	const char* labels      = NULL;
+	const char* colors      = NULL;
+	const char* input_blob  = DETECTNET_DEFAULT_INPUT;
+	const char* output_cvg  = DETECTNET_DEFAULT_COVERAGE;
+	const char* output_bbox = DETECTNET_DEFAULT_BBOX;
+	
+	float threshold = DETECTNET_DEFAULT_CONFIDENCE_THRESHOLD;
+	
+	static char* kwlist[] = {"network", "argv", "threshold", "model", "labels", "colors", "input_blob", "output_cvg", "output_bbox", NULL};
 
-	if( !PyArg_ParseTupleAndKeywords(args, kwds, "|sOf", kwlist, &network, &argList, &threshold))
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet.__init()__ failed to parse args tuple");
+	if( !PyArg_ParseTupleAndKeywords(args, kwds, "|sOfssssss", kwlist, &network, &argList, &threshold, &model, &labels, &colors, &input_blob, &output_cvg, &output_bbox))
 		return -1;
-	}
     
 	// determine whether to use argv or built-in network
 	if( argList != NULL && PyList_Check(argList) && PyList_Size(argList) > 0 )
@@ -530,34 +629,27 @@ static int PyDetectNet_Init( PyDetectNet_Object* self, PyObject *args, PyObject 
 		}
 
 		// load the network using (argc, argv)
+		Py_BEGIN_ALLOW_THREADS
 		self->net = detectNet::Create(argc, argv);
+		Py_END_ALLOW_THREADS
 
 		// free the arguments array
 		free(argv);
 	}
 	else
 	{
-		LogVerbose(LOG_PY_INFERENCE "detectNet loading build-in network '%s'\n", network);
+		LogVerbose(LOG_PY_INFERENCE "detectNet loading custom model '%s'\n", model);
 		
-		// parse the selected built-in network
-		detectNet::NetworkType networkType = detectNet::NetworkTypeFromStr(network);
-		
-		if( networkType == detectNet::CUSTOM )
-		{
-			PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet invalid built-in network was requested");
-			LogError(LOG_PY_INFERENCE "detectNet invalid built-in network was requested ('%s')\n", network);
-			return -1;
-		}
-		
-		// load the built-in network
-		self->net = detectNet::Create(networkType, threshold);
-	}
-
+		// load the network using custom model parameters
+		Py_BEGIN_ALLOW_THREADS
+		self->net = detectNet::Create(NULL, model != NULL ? model : network, 0.0f, labels, colors, threshold, input_blob, output_cvg, output_bbox);
+		Py_END_ALLOW_THREADS
+	}	
+	
 	// confirm the network loaded
 	if( !self->net )
 	{
 		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet failed to load network");
-		LogError(LOG_PY_INFERENCE "detectNet failed to load network\n");
 		return -1;
 	}
 
@@ -608,10 +700,7 @@ static PyObject* PyDetectNet_Detect( PyDetectNet_Object* self, PyObject* args, P
 	static char* kwlist[]  = {"image", "width", "height", "overlay", "format", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "O|iiss", kwlist, &capsule, &width, &height, &overlay, &format_str))
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet.Detect() failed to parse args tuple");
 		return NULL;
-	}
 
 	// parse format string
 	imageFormat format = imageFormatFromStr(format_str);
@@ -624,9 +713,12 @@ static PyObject* PyDetectNet_Detect( PyDetectNet_Object* self, PyObject* args, P
 
 	// run the object detection
 	detectNet::Detection* detections = NULL;
-
-	const int numDetections = self->net->Detect(ptr, width, height, format, &detections, detectNet::OverlayFlagsFromStr(overlay));
-
+	int numDetections = 0;
+	
+	Py_BEGIN_ALLOW_THREADS
+	numDetections = self->net->Detect(ptr, width, height, format, &detections, detectNet::OverlayFlagsFromStr(overlay));
+	Py_END_ALLOW_THREADS
+	
 	if( numDetections < 0 )
 	{
 		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet.Detect() encountered an error classifying the image");
@@ -685,10 +777,7 @@ static PyObject* PyDetectNet_Overlay( PyDetectNet_Object* self, PyObject* args, 
 	static char* kwlist[]  = {"image", "detections", "width", "height", "overlay", "format", "output", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "OO|iissO", kwlist, &input_capsule, &detections, &width, &height, &overlay, &format_str, &output_capsule))
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet.Detect() failed to parse arguments");
 		return NULL;
-	}
 
 	if( !output_capsule )
 		output_capsule = input_capsule;
@@ -729,9 +818,16 @@ static PyObject* PyDetectNet_Overlay( PyDetectNet_Object* self, PyObject* args, 
 
 	if( detections_ptr.size() > 0 ) 
 	{
-		if( !self->net->Overlay(input_ptr, output_ptr, width, height, format, 
+		bool result = false;
+		Py_BEGIN_ALLOW_THREADS
+		
+		result = self->net->Overlay(input_ptr, output_ptr, width, height, format, 
 						    detections_ptr.data(), detections_ptr.size(), 
-						    detectNet::OverlayFlagsFromStr(overlay)) ) 
+						    detectNet::OverlayFlagsFromStr(overlay));
+				
+		Py_END_ALLOW_THREADS
+		
+		if( !result ) 
 		{
 			PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet.Overlay() encountered an error");
 			return NULL;
@@ -742,13 +838,13 @@ static PyObject* PyDetectNet_Overlay( PyDetectNet_Object* self, PyObject* args, 
 }
 
 
-#define DOC_GET_THRESHOLD  "Return the minimum detection threshold.\n\n" \
-				 	  "Parameters:  (none)\n\n" \
-					  "Returns:\n" \
-					  "  (float) -- the threshold for detection"
+#define DOC_GET_CONFIDENCE_THRESHOLD  "Return the minimum detection threshold.\n\n" \
+							   "Parameters:  (none)\n\n" \
+							   "Returns:\n" \
+							   "  (float) -- the threshold for detection"
 
-// GetThreshold
-static PyObject* PyDetectNet_GetThreshold( PyDetectNet_Object* self )
+// GetConfidenceThreshold
+static PyObject* PyDetectNet_GetConfidenceThreshold( PyDetectNet_Object* self )
 {
 	if( !self || !self->net )
 	{
@@ -756,17 +852,17 @@ static PyObject* PyDetectNet_GetThreshold( PyDetectNet_Object* self )
 		return NULL;
 	}
 
-	return PyFloat_FromDouble(self->net->GetThreshold());
+	return PyFloat_FromDouble(self->net->GetConfidenceThreshold());
 }
 
 
-#define DOC_SET_THRESHOLD  "Return the minimum detection threshold.\n\n" \
-				 	  "Parameters:\n" \
-					  "  (float) -- detection threshold\n\n" \
-					  "Returns:  (none)"
+#define DOC_SET_CONFIDENCE_THRESHOLD  "Set the minimum detection threshold.\n\n" \
+				 	             "Parameters:\n" \
+					             "  (float) -- detection threshold\n\n" \
+					             "Returns:  (none)"
 
-// SetThreshold
-PyObject* PyDetectNet_SetThreshold( PyDetectNet_Object* self, PyObject* args )
+// SetConfidenceThreshold
+PyObject* PyDetectNet_SetConfidenceThreshold( PyDetectNet_Object* self, PyObject* args )
 {
 	if( !self || !self->net )
 	{
@@ -777,12 +873,51 @@ PyObject* PyDetectNet_SetThreshold( PyDetectNet_Object* self, PyObject* args )
 	float threshold = 0.0f;
 
 	if( !PyArg_ParseTuple(args, "f", &threshold) )
+		return NULL;
+
+	self->net->SetConfidenceThreshold(threshold);
+	Py_RETURN_NONE;
+}
+
+
+#define DOC_GET_CLUSTERING_THRESHOLD  "Return the overlapping area % threshold for clustering.\n\n" \
+							   "Parameters:  (none)\n\n" \
+							   "Returns:\n" \
+							   "  (float) -- the overlapping area % threshold for merging bounding boxes"
+
+// GetClusteringThreshold
+static PyObject* PyDetectNet_GetClusteringThreshold( PyDetectNet_Object* self )
+{
+	if( !self || !self->net )
 	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet.SetThreshold() failed to parse arguments");
+		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet invalid object instance");
 		return NULL;
 	}
-		
-	self->net->SetThreshold(threshold);
+
+	return PyFloat_FromDouble(self->net->GetClusteringThreshold());
+}
+
+
+#define DOC_SET_CLUSTERING_THRESHOLD  "Set the overlapping area % threshold for clustering.\n\n" \
+				 	             "Parameters:\n" \
+					             "  (float) -- the overlapping area % threshold for merging bounding boxes\n\n" \
+					             "Returns:  (none)"
+
+// SetClusteringThreshold
+PyObject* PyDetectNet_SetClusteringThreshold( PyDetectNet_Object* self, PyObject* args )
+{
+	if( !self || !self->net )
+	{
+		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet invalid object instance");
+		return NULL;
+	}
+	
+	float threshold = 0.0f;
+
+	if( !PyArg_ParseTuple(args, "f", &threshold) )
+		return NULL;
+
+	self->net->SetClusteringThreshold(threshold);
 	Py_RETURN_NONE;
 }
 
@@ -823,11 +958,8 @@ PyObject* PyDetectNet_GetClassDesc( PyDetectNet_Object* self, PyObject* args )
 	int classIdx = 0;
 
 	if( !PyArg_ParseTuple(args, "i", &classIdx) )
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet.GetClassDesc() failed to parse arguments");
 		return NULL;
-	}
-		
+	
 	if( classIdx < 0 || classIdx >= self->net->GetNumClasses() )
 	{
 		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet requested class index is out of bounds");
@@ -857,10 +989,7 @@ PyObject* PyDetectNet_GetClassSynset( PyDetectNet_Object* self, PyObject* args )
 	int classIdx = 0;
 
 	if( !PyArg_ParseTuple(args, "i", &classIdx) )
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet.GetClassSynset() failed to parse arguments");
 		return NULL;
-	}
 		
 	if( classIdx < 0 || classIdx >= self->net->GetNumClasses() )
 	{
@@ -869,6 +998,233 @@ PyObject* PyDetectNet_GetClassSynset( PyDetectNet_Object* self, PyObject* args )
 	}
 
 	return Py_BuildValue("s", self->net->GetClassSynset(classIdx));
+}
+
+
+#define DOC_GET_TRACKER_TYPE "Returns the type of tracker being used as a string\n\n" \
+					    "Parameters:  (none)\n\n" \
+					    "Returns:\n" \
+					    "  (string) -- 'IOU', 'KLT', or None if no tracking\n"
+
+// GetTrackerType
+static PyObject* PyDetectNet_GetTrackerType( PyDetectNet_Object* self )
+{
+	if( !self || !self->net )
+	{
+		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet invalid object instance");
+		return NULL;
+	}
+	
+	objectTracker* tracker = self->net->GetTracker();
+	
+	if( !tracker )
+		Py_RETURN_NONE;
+	
+	return Py_BuildValue("s", objectTracker::TypeToStr(tracker->GetType()));
+}
+
+
+#define DOC_SET_TRACKER_TYPE "Sets the type of tracker being used\n\n" \
+				 	    "Parameters:\n" \
+					    "  (string) -- 'IOU' or 'KLT' (other strings will disable tracking)\n" \
+					    "Returns:  (none)"
+
+// SetTrackerType
+static PyObject* PyDetectNet_SetTrackerType( PyDetectNet_Object* self, PyObject* args )
+{
+	if( !self || !self->net )
+	{
+		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet invalid object instance");
+		return NULL;
+	}
+	
+	const char* typeStr = NULL;
+
+	if( !PyArg_ParseTuple(args, "s", &typeStr) )
+		return NULL;
+
+	const objectTracker::Type type = objectTracker::TypeFromStr(typeStr);
+	
+	// either create a new tracker, or save the existing one if the requested type matches
+	objectTracker* tracker = self->net->GetTracker();
+	
+	if( tracker != NULL && tracker->IsType(type) )
+		Py_RETURN_NONE;
+	
+	if( tracker != NULL )
+		delete tracker;
+	
+	self->net->SetTracker(objectTracker::Create(type));
+	
+	Py_RETURN_NONE;
+}
+
+
+#define DOC_IS_TRACKING_ENABLED "Returns true if tracking is enabled, otherwise false\n\n" \
+					       "Parameters:  (none)\n\n" \
+					       "Returns:\n" \
+					       "  (bool) -- true if tracking is enabled, otherwise false\n"
+
+// IsTrackingEnabled
+static PyObject* PyDetectNet_IsTrackingEnabled( PyDetectNet_Object* self )
+{
+	if( !self || !self->net )
+	{
+		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet invalid object instance");
+		return NULL;
+	}
+	
+	objectTracker* tracker = self->net->GetTracker();
+	
+	if( tracker != NULL && tracker->IsEnabled() )
+		Py_RETURN_TRUE;
+	
+	Py_RETURN_FALSE;
+}
+
+
+#define DOC_SET_TRACKING_ENABLED "Sets if tracking is enabled or disabled.\n" \
+						   "When enabling tracking, if the tracker type wasn't previously\n" \
+						   "set with detectNet.SetTrackerType(), then 'IOU' will be used.\n\n" \
+				 	        "Parameters:\n" \
+					        "  (bool) -- true to enable tracking, false to disable it\n" \
+					        "Returns:  (none)"
+
+// SetTrackingEnabled
+static PyObject* PyDetectNet_SetTrackingEnabled( PyDetectNet_Object* self, PyObject* args )
+{
+	if( !self || !self->net )
+	{
+		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet invalid object instance");
+		return NULL;
+	}
+	
+	int enabled = 0;
+
+	if( !PyArg_ParseTuple(args, "p", &enabled) )
+		return NULL;
+
+	objectTracker* tracker = self->net->GetTracker();
+
+	if( tracker != NULL )
+	{
+		tracker->SetEnabled((bool)enabled);
+		Py_RETURN_NONE;
+	}
+	
+	if( !enabled )
+		Py_RETURN_NONE;
+	
+	self->net->SetTracker(objectTracker::Create(objectTracker::IOU));
+	
+	Py_RETURN_NONE;
+}
+
+
+#define DOC_GET_TRACKING_PARAMS "Returns a dict containing various tracking parameters.\n\n" \
+				 "Parameters: (none)\n\n" \
+				 "Returns: a dict containing the following keys/values (dependent on the type of tracker):\n" \
+				 "  minFrames (int) -- the number of re-identified frames before before establishing a track (IOU tracker only)\n" \
+				 "  dropFrames (int) -- the number of consecutive lost frames after which a track is removed (IOU tracker only)\n" \
+				 "  overlapThreshold (float) -- how much IOU overlap is required for a bounding box to be matched, between [0,1] (IOU tracker only)\n"
+				 
+// GetTrackingParams
+static PyObject* PyDetectNet_GetTrackingParams( PyDetectNet_Object* self )
+{
+	if( !self || !self->net )
+	{
+		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet invalid object instance");
+		return NULL;
+	}
+	
+	PyObject* dict = PyDict_New();
+	
+	objectTracker* tracker = self->net->GetTracker();
+	
+	if( !tracker )
+	{
+		PYDICT_SET_UINT(dict, "minFrames", OBJECT_TRACKER_DEFAULT_MIN_FRAMES);
+		PYDICT_SET_UINT(dict, "dropFrames", OBJECT_TRACKER_DEFAULT_DROP_FRAMES);
+		PYDICT_SET_FLOAT(dict, "overlapThreshold", OBJECT_TRACKER_DEFAULT_OVERLAP_THRESHOLD);
+	}
+	else if( tracker->IsType(objectTracker::IOU) )
+	{
+		objectTrackerIOU* iou = (objectTrackerIOU*)tracker;
+		
+		PYDICT_SET_UINT(dict, "minFrames", iou->GetMinFrames());
+		PYDICT_SET_UINT(dict, "dropFrames", iou->GetDropFrames());
+		PYDICT_SET_FLOAT(dict, "overlapThreshold", iou->GetOverlapThreshold());
+	}
+	
+	return dict;
+}
+
+
+#define DOC_SET_TRACKING_PARAMS "Sets various tracker parameters using keyword arguments.\n\n" \
+				 "Parameters:\n" \
+				 "  minFrames (int) -- the number of re-identified frames before before establishing a track (IOU tracker only)\n" \
+				 "  dropFrames (int) -- the number of consecutive lost frames after which a track is removed (IOU tracker only)\n" \
+				 "  overlapThreshold (float) -- how much IOU overlap is required for a bounding box to be matched, between [0,1] (IOU tracker only)\n\n" \
+				 "Returns:\n" \
+				 "  None"
+
+// SetTrackingParams
+static PyObject* PyDetectNet_SetTrackingParams( PyDetectNet_Object* self, PyObject* args, PyObject *kwds )
+{
+	if( !self || !self->net )
+	{
+		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet invalid object instance");
+		return NULL;
+	}
+	
+	// parse arguments
+	int minFrames = -1;
+	int dropFrames = -1;
+	float overlapThreshold = -1;
+
+	static char* kwlist[]  = {"minFrames", "dropFrames", "overlapThreshold", NULL};
+
+	if( !PyArg_ParseTupleAndKeywords(args, kwds, "|iif", kwlist, &minFrames, &dropFrames, &overlapThreshold) )
+		return NULL;
+	
+	objectTracker* tracker = self->net->GetTracker();
+	
+	if( !tracker )
+		Py_RETURN_NONE;
+	
+	if( tracker->IsType(objectTracker::IOU) )
+	{
+		objectTrackerIOU* iou = (objectTrackerIOU*)tracker;
+		
+		if( minFrames >= 0 )
+			iou->SetMinFrames(minFrames);
+		
+		if( dropFrames >= 0 )
+			iou->SetDropFrames(dropFrames);
+		
+		if( overlapThreshold >= 0 )
+			iou->SetOverlapThreshold(overlapThreshold);
+	}
+	
+	Py_RETURN_NONE;
+}
+
+
+#define DOC_GET_OVERLAY_ALPHA "Return the overlay alpha blending value for classes that don't have it explicitly set.\n\n" \
+				 	     "Parameters: (none)\n\n" \
+					     "Returns:\n" \
+					     "  (float) -- alpha blending value between [0,255]"
+
+// GetOverlayAlpha
+PyObject* PyDetectNet_GetOverlayAlpha( PyDetectNet_Object* self )
+{
+	if( !self || !self->net )
+	{
+		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet invalid object instance");
+		return NULL;
+	}
+	
+	return PyFloat_FromDouble(self->net->GetOverlayAlpha());
 }
 
 
@@ -890,11 +1246,8 @@ PyObject* PyDetectNet_SetOverlayAlpha( PyDetectNet_Object* self, PyObject* args,
 	static char* kwlist[] = {"alpha", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "f", kwlist, &alpha) )
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet.SetOverlayAlpha() failed to parse arguments");
 		return NULL;
-	}
-		
+
 	if( alpha < 0.0f || alpha > 255.0f )
 	{
 		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet.SetOverlayAlpha() -- provided alpha value is out-of-range");
@@ -904,6 +1257,24 @@ PyObject* PyDetectNet_SetOverlayAlpha( PyDetectNet_Object* self, PyObject* args,
 	self->net->SetOverlayAlpha(alpha);
 
 	Py_RETURN_NONE;
+}
+
+
+#define DOC_GET_LINE_WIDTH "Return the line width used during overlay when 'lines' mode is used.\n\n" \
+				 	  "Parameters: (none)\n\n" \
+					  "Returns:\n" \
+					  "  (float) -- line width in pixels"
+
+// GetLineWidth
+PyObject* PyDetectNet_GetLineWidth( PyDetectNet_Object* self )
+{
+	if( !self || !self->net )
+	{
+		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet invalid object instance");
+		return NULL;
+	}
+	
+	return PyFloat_FromDouble(self->net->GetLineWidth());
 }
 
 
@@ -925,11 +1296,8 @@ PyObject* PyDetectNet_SetLineWidth( PyDetectNet_Object* self, PyObject* args, Py
 	static char* kwlist[] = {"width", NULL};
 
 	if( !PyArg_ParseTupleAndKeywords(args, kwds, "f", kwlist, &width) )
-	{
-		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet.SetLineWidth() failed to parse arguments");
 		return NULL;
-	}
-		
+	
 	if( width <= 0.0f )
 	{
 		PyErr_SetString(PyExc_Exception, LOG_PY_INFERENCE "detectNet.SetLineWidth() -- provided value is out-of-range");
@@ -963,12 +1331,25 @@ static PyMethodDef pyDetectNet_Methods[] =
 {
 	{ "Detect", (PyCFunction)PyDetectNet_Detect, METH_VARARGS|METH_KEYWORDS, DOC_DETECT},
 	{ "Overlay", (PyCFunction)PyDetectNet_Overlay, METH_VARARGS|METH_KEYWORDS, DOC_OVERLAY},
-	{ "GetThreshold", (PyCFunction)PyDetectNet_GetThreshold, METH_NOARGS, DOC_GET_THRESHOLD},
-	{ "SetThreshold", (PyCFunction)PyDetectNet_SetThreshold, METH_VARARGS, DOC_SET_THRESHOLD},     
 	{ "GetNumClasses", (PyCFunction)PyDetectNet_GetNumClasses, METH_NOARGS, DOC_GET_NUM_CLASSES},
+	{ "GetClassLabel", (PyCFunction)PyDetectNet_GetClassDesc, METH_VARARGS, DOC_GET_CLASS_DESC},
 	{ "GetClassDesc", (PyCFunction)PyDetectNet_GetClassDesc, METH_VARARGS, DOC_GET_CLASS_DESC},
 	{ "GetClassSynset", (PyCFunction)PyDetectNet_GetClassSynset, METH_VARARGS, DOC_GET_CLASS_SYNSET},
+	{ "GetThreshold", (PyCFunction)PyDetectNet_GetConfidenceThreshold, METH_NOARGS, DOC_GET_CONFIDENCE_THRESHOLD},
+	{ "SetThreshold", (PyCFunction)PyDetectNet_SetConfidenceThreshold, METH_VARARGS, DOC_SET_CONFIDENCE_THRESHOLD}, 
+	{ "GetConfidenceThreshold", (PyCFunction)PyDetectNet_GetConfidenceThreshold, METH_NOARGS, DOC_GET_CONFIDENCE_THRESHOLD},
+	{ "SetConfidenceThreshold", (PyCFunction)PyDetectNet_SetConfidenceThreshold, METH_VARARGS, DOC_SET_CONFIDENCE_THRESHOLD}, 
+	{ "GetClusteringThreshold", (PyCFunction)PyDetectNet_GetClusteringThreshold, METH_NOARGS, DOC_GET_CLUSTERING_THRESHOLD},
+	{ "SetClusteringThreshold", (PyCFunction)PyDetectNet_SetClusteringThreshold, METH_VARARGS, DOC_SET_CLUSTERING_THRESHOLD},
+	{ "GetTrackerType", (PyCFunction)PyDetectNet_GetTrackerType, METH_NOARGS, DOC_GET_TRACKER_TYPE},
+	{ "SetTrackerType", (PyCFunction)PyDetectNet_SetTrackerType, METH_VARARGS, DOC_SET_TRACKER_TYPE},
+	{ "IsTrackingEnabled", (PyCFunction)PyDetectNet_IsTrackingEnabled, METH_NOARGS, DOC_IS_TRACKING_ENABLED},
+	{ "SetTrackingEnabled", (PyCFunction)PyDetectNet_SetTrackingEnabled, METH_VARARGS, DOC_SET_TRACKING_ENABLED},
+	{ "GetTrackingParams", (PyCFunction)PyDetectNet_GetTrackingParams, METH_NOARGS, DOC_GET_TRACKING_PARAMS},
+	{ "SetTrackingParams", (PyCFunction)PyDetectNet_SetTrackingParams, METH_VARARGS|METH_KEYWORDS, DOC_SET_TRACKING_PARAMS},
+	{ "GetOverlayAlpha", (PyCFunction)PyDetectNet_GetOverlayAlpha, METH_NOARGS, DOC_GET_OVERLAY_ALPHA},
 	{ "SetOverlayAlpha", (PyCFunction)PyDetectNet_SetOverlayAlpha, METH_VARARGS|METH_KEYWORDS, DOC_SET_OVERLAY_ALPHA},
+	{ "GetLineWidth", (PyCFunction)PyDetectNet_GetLineWidth, METH_NOARGS, DOC_GET_LINE_WIDTH},
 	{ "SetLineWidth", (PyCFunction)PyDetectNet_SetLineWidth, METH_VARARGS|METH_KEYWORDS, DOC_SET_LINE_WIDTH},
 	{ "Usage", (PyCFunction)PyDetectNet_Usage, METH_NOARGS|METH_STATIC, DOC_USAGE_STRING},	
 	{NULL}  /* Sentinel */
@@ -993,6 +1374,7 @@ bool PyDetectNet_Register( PyObject* module )
 	pyDetection_Type.tp_init		= (initproc)PyDetection_Init;
 	pyDetection_Type.tp_dealloc	= (destructor)PyDetection_Dealloc;
 	pyDetection_Type.tp_str		= (reprfunc)PyDetection_ToString;
+	pyDetection_Type.tp_repr		= (reprfunc)PyDetection_ToString;
 	pyDetection_Type.tp_doc		= DOC_DETECTION;
 
 	if( PyType_Ready(&pyDetection_Type) < 0 )

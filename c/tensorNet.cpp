@@ -52,6 +52,8 @@
 					   "           $ cd <jetson-inference>/tools\n" 	  	\
 					   "           $ ./download-models.sh\n"
 
+#define USE_INPUT_TENSOR_CUDA_DEVICE_MEMORY
+#define CHECKSUM_TYPE "sha256sum"
 
 //---------------------------------------------------------------------
 const char* precisionTypeToStr( precisionType type )
@@ -102,7 +104,7 @@ static inline bool isFp16Enabled( nvinfer1::IBuilderConfig* config )
 
 static inline bool isInt8Enabled( nvinfer1::IBuilderConfig* config )
 {
-	return config->getFlag(nvinfer1::BuilderFlag::kFP16);
+	return config->getFlag(nvinfer1::BuilderFlag::kINT8);
 }
 #else // NV_TENSORRT_MAJOR <= 7
 static inline bool isFp16Enabled( nvinfer1::IBuilder* builder )
@@ -156,7 +158,7 @@ static inline const char* dimensionTypeToStr( nvinfer1::DimensionType type )
 #endif
 #endif
 
-#if NV_TENSORRT_MAJOR > 1
+#if NV_TENSORRT_MAJOR > 1 
 static inline nvinfer1::Dims validateDims( const nvinfer1::Dims& dims )
 {
 	if( dims.nbDims == nvinfer1::Dims::MAX_DIMS )
@@ -170,7 +172,51 @@ static inline nvinfer1::Dims validateDims( const nvinfer1::Dims& dims )
 
 	return dims_out;
 }
-#endif
+
+static inline void copyDims( Dims3* dest, const nvinfer1::Dims* src )
+{
+	for( int n=0; n < src->nbDims; n++ )
+		dest->d[n] = src->d[n];
+	
+	dest->nbDims = src->nbDims;
+}
+
+static inline size_t sizeDims( const nvinfer1::Dims& dims, const size_t elementSize=1 )
+{
+	size_t sz = dims.d[0];
+	
+	for ( int n=1; n < dims.nbDims; n++ )
+		sz *= dims.d[n];
+
+	return sz * elementSize;
+}
+#else
+static inline nvinfer1::Dims3 validateDims( const nvinfer1::Dims3& dims )
+{
+	nvinfer1::Dims3 out = dims;
+	
+	if( DIMS_C(out) == 0 )
+		DIMS_C(out) = 1;
+	
+	if( DIMS_H(out) == 0 )
+		DIMS_H(out) = 1;
+	
+	if( DIMS_W(out) == 0 )
+		DIMS_W(out) = 1;
+	
+	return out;
+}
+
+static inline void copyDims( Dims3* dest, const nvinfer1::Dims3* src )
+{
+	memcpy(dest, src, sizeof(nvinfer1::Dims));
+}
+
+static inline size_t sizeDims( const Dims3& dims, const size_t elementSize=1 )
+{
+	return DIMS_C(dims) * DIMS_H(dims) * DIMS_W(dims) * elementSize;
+}
+#endif	
 
 #if NV_TENSORRT_MAJOR >= 7
 static inline nvinfer1::Dims shiftDims( const nvinfer1::Dims& dims )
@@ -179,12 +225,22 @@ static inline nvinfer1::Dims shiftDims( const nvinfer1::Dims& dims )
 	// which adds a batch dimension (4D NCHW), whereas historically
 	// 3D CHW was expected.  Remove the batch dim (it is typically 1)
 	nvinfer1::Dims out = dims;
-
-	out.d[0] = dims.d[1];
+	
+	/*out.d[0] = dims.d[1];
 	out.d[1] = dims.d[2];
 	out.d[2] = dims.d[3];
-	out.d[3] = 1;
-
+	out.d[3] = 1;*/
+	
+	if( dims.nbDims == 1 )
+		return out;
+	
+	for( int n=0; n < dims.nbDims; n++ )
+		out.d[n] = dims.d[n+1];
+	
+	for( int n=dims.nbDims; n < nvinfer1::Dims::MAX_DIMS; n++ )
+		out.d[n] = 1;
+	
+	out.nbDims -= 1;
 	return out;
 }
 #endif
@@ -260,7 +316,7 @@ modelType modelTypeFromStr( const char* str )
 		return MODEL_ONNX;
 	else if( strcasecmp(str, "uff") == 0 )
 		return MODEL_UFF;
-	else if( strcasecmp(str, "engine") == 0 || strcasecmp(str, "plan") == 0 )
+	else if( strcasecmp(str, "engine") == 0 || strcasecmp(str, "plan") == 0 || strcasecmp(str, "trt") == 0 )
 		return MODEL_ENGINE;
 
 	return MODEL_CUSTOM;
@@ -326,6 +382,12 @@ tensorNet::tensorNet()
 // Destructor
 tensorNet::~tensorNet()
 {
+	if( mContext != NULL )
+	{
+		mContext->destroy();
+		mContext = NULL;
+	}
+	
 	if( mEngine != NULL )
 	{
 		mEngine->destroy();
@@ -337,6 +399,20 @@ tensorNet::~tensorNet()
 		mInfer->destroy();
 		mInfer = NULL;
 	}
+	
+	for( size_t n=0; n < mInputs.size(); n++ )
+	{
+	#ifdef USE_INPUT_TENSOR_CUDA_DEVICE_MEMORY
+		CUDA_FREE(mInputs[n].CUDA);
+	#else
+		CUDA_FREE_HOST(mInputs[n].CUDA);
+	#endif
+	}
+	
+	for( size_t n=0; n < mOutputs.size(); n++ )
+		CUDA_FREE_HOST(mOutputs[n].CPU);
+	
+	free(mBindings);
 }
 
 
@@ -669,9 +745,39 @@ bool tensorNet::ProfileModel(const std::string& deployFile,			   // name for caf
 		LogError(LOG_TRT "device %s, failed to configure builder\n", deviceTypeToStr(device));
 		return false;
 	}
+	
+	// attempt to load the timing cache
+	const nvinfer1::ITimingCache* timingCache = NULL;
+	
+	char timingCachePath[PATH_MAX];
+	sprintf(timingCachePath, "/usr/local/bin/networks/tensorrt.%i.timingcache", NV_TENSORRT_VERSION);
+
+	if( fileExists(timingCachePath) )
+	{
+		LogInfo(LOG_TRT "loading timing cache from %s\n", timingCachePath);
+		
+		void* timingCacheBuffer = NULL;
+		const size_t timingCacheSize = loadFile(timingCachePath, &timingCacheBuffer);
+		
+		if( timingCacheSize > 0 )
+		{
+			timingCache = builderConfig->createTimingCache(timingCacheBuffer, timingCacheSize);
+			free(timingCacheBuffer);
+		}
+	}
+	
+	if( !timingCache )
+	{
+		timingCache = builderConfig->createTimingCache(NULL, 0);  // create a new cache
+	
+		if( !timingCache )
+			LogWarning(LOG_TRT "couldn't create new timing cache\n");
+	}
+	
+	if( timingCache != NULL && !builderConfig->setTimingCache(*timingCache, false) )
+		LogWarning(LOG_TRT "failed to activate timing cache");
 #else
-	if( !ConfigureBuilder(builder, maxBatchSize, mWorkspaceSize, precision,
-					  device, allowGPUFallback, calibrator) )
+	if( !ConfigureBuilder(builder, maxBatchSize, mWorkspaceSize, precision, device, allowGPUFallback, calibrator) )
 	{
 		LogError(LOG_TRT "device %s, failed to configure builder\n", deviceTypeToStr(device));
 		return false;
@@ -698,6 +804,44 @@ bool tensorNet::ProfileModel(const std::string& deployFile,			   // name for caf
 
 	LogSuccess(LOG_TRT "device %s, completed building CUDA engine\n", deviceTypeToStr(device));
 
+#if NV_TENSORRT_MAJOR >= 8
+	if( timingCache != NULL )
+	{
+		// save the updated timing cache
+		nvinfer1::IHostMemory* timingCacheMem = timingCache->serialize();
+		
+		if( timingCacheMem != NULL )
+		{
+			const char* timingCacheBuffer = (char*)timingCacheMem->data();
+			const size_t timingCacheSize = timingCacheMem->size();
+		
+			LogVerbose(LOG_TRT "saving timing cache to %s (%zu bytes)\n", timingCachePath, timingCacheSize);
+			
+			// write the cache file
+			FILE* timingCacheFile = NULL;
+			timingCacheFile = fopen(timingCachePath, "wb");
+
+			if( timingCacheFile != NULL )
+			{
+				if( fwrite(timingCacheBuffer,	1, timingCacheSize, timingCacheFile) != timingCacheSize )
+					LogWarning(LOG_TRT "failed to write %zu bytes to timing cache file %s\n", timingCacheSize, timingCachePath);
+			
+				fclose(timingCacheFile);
+			}
+			else
+			{
+				LogWarning(LOG_TRT "failed to open timing cache file for writing %s\n", timingCachePath);
+			}
+			
+			timingCacheMem->destroy();
+		}
+	
+		delete timingCache;
+	}
+	
+	builderConfig->destroy();
+#endif
+	
 	// we don't need the network definition any more, and we can destroy the parser
 	network->destroy();
 	//parser->destroy();
@@ -728,6 +872,8 @@ bool tensorNet::ProfileModel(const std::string& deployFile,			   // name for caf
 	
 	*engineStream = engineMemory;
 	*engineSize = serSize;
+	
+	serMem->destroy();
 #else
 	engine->serialize(modelStream);
 #endif
@@ -735,6 +881,7 @@ bool tensorNet::ProfileModel(const std::string& deployFile,			   // name for caf
 	// free builder resources
 	engine->destroy();
 	builder->destroy();
+	
 	return true;
 }
 
@@ -938,7 +1085,7 @@ bool tensorNet::LoadNetwork( const char* prototxt_path, const char* model_path, 
 				    allowGPUFallback, calibrator, stream);
 }
 
-				   
+		   
 // LoadNetwork
 bool tensorNet::LoadNetwork( const char* prototxt_path_, const char* model_path_, const char* mean_path, 
 					    const std::vector<std::string>& input_blobs, 
@@ -1038,7 +1185,8 @@ bool tensorNet::LoadNetwork( const char* prototxt_path_, const char* model_path_
 
 		mModelType = model_fmt;
 		mModelPath = model_path;
-
+		mModelFile = pathFilename(mModelPath);
+		
 		LogSuccess(LOG_TRT "device %s, initialized %s\n", deviceTypeToStr(device), mModelPath.c_str());	
 		return true;
 	}
@@ -1061,21 +1209,23 @@ bool tensorNet::LoadNetwork( const char* prototxt_path_, const char* model_path_
 	char* engineStream = NULL;
 	size_t engineSize = 0;
 
-	char cache_prefix[512];
-	char cache_path[512];
+	char cache_prefix[PATH_MAX];
+	char cache_path[PATH_MAX];
 
 	sprintf(cache_prefix, "%s.%u.%u.%i.%s.%s", model_path.c_str(), maxBatchSize, (uint32_t)allowGPUFallback, NV_TENSORRT_VERSION, deviceTypeToStr(device), precisionTypeToStr(precision));
 	sprintf(cache_path, "%s.calibration", cache_prefix);
 	mCacheCalibrationPath = cache_path;
 	
+	sprintf(cache_path, "%s.%s", model_path.c_str(), CHECKSUM_TYPE);
+	mChecksumPath = cache_path;
+	
 	sprintf(cache_path, "%s.engine", cache_prefix);
 	mCacheEnginePath = cache_path;	
-	LogVerbose(LOG_TRT "attempting to open engine cache file %s\n", mCacheEnginePath.c_str());
 
 	// check for existence of cache
-	if( !fileExists(cache_path) )
+	if( !ValidateEngine(model_path.c_str(), cache_path, mChecksumPath.c_str()) )
 	{
-		LogVerbose(LOG_TRT "cache file not found, profiling network model on device %s\n", deviceTypeToStr(device));
+		LogVerbose(LOG_TRT "cache file invalid, profiling network model on device %s\n", deviceTypeToStr(device));
 	
 		// check for existence of model
 		if( model_path.size() == 0 )
@@ -1094,7 +1244,7 @@ bool tensorNet::LoadNetwork( const char* prototxt_path_, const char* model_path_
 			return 0;
 		}
 	
-		LogVerbose(LOG_TRT "network profiling complete, writing engine cache to %s\n", cache_path);
+		LogVerbose(LOG_TRT "network profiling complete, saving engine cache to %s\n", cache_path);
 		
 		// write the cache file
 		FILE* cacheFile = NULL;
@@ -1112,7 +1262,20 @@ bool tensorNet::LoadNetwork( const char* prototxt_path_, const char* model_path_
 			LogError(LOG_TRT "failed to open engine cache file for writing %s\n", cache_path);
 		}
 
-		LogSuccess(LOG_TRT "device %s, completed writing engine cache to %s\n", deviceTypeToStr(device), cache_path);
+		LogSuccess(LOG_TRT "device %s, completed saving engine cache to %s\n", deviceTypeToStr(device), cache_path);
+		
+		// write the checksum file
+		LogVerbose(LOG_TRT "saving model checksum to %s\n", mChecksumPath.c_str());
+		
+		char cmd[PATH_MAX * 2 + 256];
+		snprintf(cmd, sizeof(cmd), "%s %s | awk '{print $1}' > %s", CHECKSUM_TYPE, model_path.c_str(), mChecksumPath.c_str());
+	
+		LogVerbose(LOG_TRT "%s\n", cmd);
+	
+		const int result = system(cmd);
+		
+		if( result != 0 )
+			LogError(LOG_TRT "failed to save model checksum to %s\n", mChecksumPath.c_str());
 	}
 	else
 	{
@@ -1136,6 +1299,7 @@ bool tensorNet::LoadNetwork( const char* prototxt_path_, const char* model_path_
 
 	mPrototxtPath     = prototxt_path;
 	mModelPath        = model_path;
+	mModelFile        = pathFilename(mModelPath);
 	mPrecision        = precision;
 	mAllowGPUFallback = allowGPUFallback;
 	mMaxBatchSize 	   = maxBatchSize;
@@ -1216,7 +1380,7 @@ bool tensorNet::LoadEngine( nvinfer1::ICudaEngine* engine,
 	if( !engine )
 		return NULL;
 
-		nvinfer1::IExecutionContext* context = engine->createExecutionContext();
+	nvinfer1::IExecutionContext* context = engine->createExecutionContext();
 	
 	if( !context )
 	{
@@ -1307,18 +1471,28 @@ bool tensorNet::LoadEngine( nvinfer1::ICudaEngine* engine,
 		Dims3 inputDims = engine->getBindingDimensions(inputIndex);
 	#endif
 
-		size_t inputSize = mMaxBatchSize * DIMS_C(inputDims) * DIMS_H(inputDims) * DIMS_W(inputDims) * sizeof(float);
+		const size_t inputSize = mMaxBatchSize * sizeDims(inputDims) * sizeof(float);
 		LogVerbose(LOG_TRT "binding to input %i %s  dims (b=%u c=%u h=%u w=%u) size=%zu\n", n, input_blobs[n].c_str(), mMaxBatchSize, DIMS_C(inputDims), DIMS_H(inputDims), DIMS_W(inputDims), inputSize);
 
 		// allocate memory to hold the input buffer
 		void* inputCPU  = NULL;
 		void* inputCUDA = NULL;
 
+	#ifdef USE_INPUT_TENSOR_CUDA_DEVICE_MEMORY
+		if( CUDA_FAILED(cudaMalloc((void**)&inputCUDA, inputSize)) )
+		{
+			LogError(LOG_TRT "failed to alloc CUDA device memory for tensor input, %zu bytes\n", inputSize);
+			return false;
+		}
+		
+		CUDA(cudaMemset(inputCUDA, 0, inputSize));
+	#else
 		if( !cudaAllocMapped((void**)&inputCPU, (void**)&inputCUDA, inputSize) )
 		{
 			LogError(LOG_TRT "failed to alloc CUDA mapped memory for tensor input, %zu bytes\n", inputSize);
 			return false;
 		}
+	#endif
 	
 		layerInfo l;
 		
@@ -1326,16 +1500,9 @@ bool tensorNet::LoadEngine( nvinfer1::ICudaEngine* engine,
 		l.CUDA = (float*)inputCUDA;
 		l.size = inputSize;
 		l.name = input_blobs[n];
-		
-	#if NV_TENSORRT_MAJOR > 1
-		DIMS_W(l.dims) = DIMS_W(inputDims);
-		DIMS_H(l.dims) = DIMS_H(inputDims);
-		DIMS_C(l.dims) = DIMS_C(inputDims);
-	#else
-		l.dims = inputDims;
-	#endif
-
 		l.binding = inputIndex;
+		
+		copyDims(&l.dims, &inputDims);
 		mInputs.push_back(l);
 	}
 
@@ -1368,7 +1535,7 @@ bool tensorNet::LoadEngine( nvinfer1::ICudaEngine* engine,
 		Dims3 outputDims = engine->getBindingDimensions(outputIndex);
 	#endif
 
-		size_t outputSize = mMaxBatchSize * DIMS_C(outputDims) * DIMS_H(outputDims) * DIMS_W(outputDims) * sizeof(float);
+		const size_t outputSize = mMaxBatchSize * sizeDims(outputDims) * sizeof(float);
 		LogVerbose(LOG_TRT "binding to output %i %s  dims (b=%u c=%u h=%u w=%u) size=%zu\n", n, output_blobs[n].c_str(), mMaxBatchSize, DIMS_C(outputDims), DIMS_H(outputDims), DIMS_W(outputDims), outputSize);
 	
 		// allocate output memory 
@@ -1388,16 +1555,9 @@ bool tensorNet::LoadEngine( nvinfer1::ICudaEngine* engine,
 		l.CUDA = (float*)outputCUDA;
 		l.size = outputSize;
 		l.name = output_blobs[n];
-
-	#if NV_TENSORRT_MAJOR > 1
-		DIMS_W(l.dims) = DIMS_W(outputDims);
-		DIMS_H(l.dims) = DIMS_H(outputDims);
-		DIMS_C(l.dims) = DIMS_C(outputDims);
-	#else
-		l.dims = outputDims;
-	#endif
-
 		l.binding = outputIndex;
+		
+		copyDims(&l.dims, &outputDims);
 		mOutputs.push_back(l);
 	}
 	
@@ -1421,6 +1581,23 @@ bool tensorNet::LoadEngine( nvinfer1::ICudaEngine* engine,
 
 	for( uint32_t n=0; n < GetOutputLayers(); n++ )
 		mBindings[mOutputs[n].binding] = mOutputs[n].CUDA;
+	
+	// find unassigned bindings and allocate them
+	for( uint32_t n=0; n < numBindings; n++ )
+	{
+		if( mBindings[n] != NULL )
+			continue;
+		
+		const size_t bindingSize = sizeDims(validateDims(engine->getBindingDimensions(n))) * mMaxBatchSize * sizeof(float);
+		
+		if( CUDA_FAILED(cudaMalloc(&mBindings[n], bindingSize)) )
+		{
+			LogError(LOG_TRT "failed to allocate %zu bytes for unused binding %u\n", bindingSize, n);
+			return false;
+		}
+		
+		LogVerbose(LOG_TRT "allocated %zu bytes for unused binding %u\n", bindingSize, n);
+	}
 	
 
 	/*
@@ -1472,54 +1649,60 @@ bool tensorNet::LoadEngine( const char* filename, char** stream, size_t* size )
 	if( !filename || !stream || !size )
 		return false;
 
-	char* engineStream = NULL;
-	size_t engineSize = 0;
-
 	LogInfo(LOG_TRT "loading network plan from engine cache... %s\n", filename);
 		
-	// determine the file size of the engine
-	engineSize = fileSize(filename);
-
+	void* engineStream = NULL;
+	const size_t engineSize = loadFile(filename, &engineStream);
+	
 	if( engineSize == 0 )
 	{
-		LogError(LOG_TRT "invalid engine cache file size (%zu bytes)  %s\n", engineSize, filename);
+		LogError(LOG_TRT "failed to load engine cache from %s\n", filename);
 		return false;
 	}
-
-	// allocate memory to hold the engine
-	engineStream = (char*)malloc(engineSize);
-
-	if( !engineStream )
-	{
-		LogError(LOG_TRT "failed to allocate %zu bytes to read engine cache %s\n", engineSize, filename);
-		return false;
-	}
-
-	// open the engine cache file from disk
-	FILE* cacheFile = NULL;
-	cacheFile = fopen(filename, "rb");
-
-	if( !cacheFile )
-	{
-		LogError(LOG_TRT "failed to open engine cache file for reading %s\n", filename);
-		return false;
-	}
-
-	// read the serialized engine into memory
-	const size_t bytesRead = fread(engineStream, 1, engineSize, cacheFile);
-
-	if( bytesRead != engineSize )
-	{
-		LogError(LOG_TRT "only read %zu of %zu bytes of engine cache file %s\n", bytesRead, engineSize, filename);
-		return false;
-	}
-
-	// close the plan cache
-	fclose(cacheFile);
-
-	*stream = engineStream;
+	
+	*stream = (char*)engineStream;
 	*size = engineSize;
+	
+	return true;
+}
 
+
+// ValidateEngine
+bool tensorNet::ValidateEngine( const char* model_path, const char* cache_path, const char* checksum_path )
+{
+	// check for existence of cache
+	if( !fileExists(cache_path) )
+	{
+		LogVerbose(LOG_TRT "could not find engine cache %s\n", cache_path);
+		return false;
+	}
+	
+	LogVerbose(LOG_TRT "found engine cache file %s\n", cache_path);
+	
+	// check for existence of checksum
+	if( !fileExists(checksum_path) )
+	{
+		LogVerbose(LOG_TRT "could not find model checksum %s\n", checksum_path);
+		return false;
+	}
+	
+	LogVerbose(LOG_TRT "found model checksum %s\n", checksum_path);
+	
+	// validate that the checksum matches the original model
+	char cmd[PATH_MAX * 2 + 256];
+	snprintf(cmd, sizeof(cmd), "echo \"$(cat %s) %s\" | %s --check --status", checksum_path, model_path, CHECKSUM_TYPE);  // https://superuser.com/a/1468626
+	
+	LogVerbose(LOG_TRT "%s\n", cmd);
+	
+	const int result = system(cmd);
+	
+	if( result != 0 )
+	{
+		LogVerbose(LOG_TRT "model did not match checksum %s (return code %i)\n", checksum_path, result);
+		return false;
+	}
+	
+	LogVerbose(LOG_TRT "model matched checksum %s\n", checksum_path);
 	return true;
 }
 
@@ -1555,26 +1738,301 @@ void tensorNet::SetStream( cudaStream_t stream )
 // ProcessNetwork
 bool tensorNet::ProcessNetwork( bool sync )
 {
-	if( sync )
+	if( TENSORRT_VERSION_CHECK(8,4,1) && mModelType == MODEL_ONNX )
 	{
-		if( !mContext->execute(1, mBindings) )
+		// on TensorRT 8.4.1 (JetPack 5.0.2 / L4T R35.1.0) and newer, this warning appears:
+		// the execute() method has been deprecated when used with engines built from a network created with NetworkDefinitionCreationFlag::kEXPLICIT_BATCH flag. Please use executeV2() instead.
+		// also, the batchSize argument passed into this function has no effect on changing the input shapes. Please use setBindingDimensions() function to change input shapes instead.
+		if( sync )
 		{
-			LogError(LOG_TRT "failed to execute TensorRT context on device %s\n", deviceTypeToStr(mDevice));
-			return false;
+			if( !mContext->executeV2(mBindings) )
+			{
+				LogError(LOG_TRT "failed to execute TensorRT context on device %s\n", deviceTypeToStr(mDevice));
+				return false;
+			}
+		}
+		else
+		{
+			if( !mContext->enqueueV2(mBindings, mStream, NULL) )
+			{
+				LogError(LOG_TRT "failed to enqueue TensorRT context on device %s\n", deviceTypeToStr(mDevice));
+				return false;
+			}
 		}
 	}
 	else
 	{
-		if( !mContext->enqueue(1, mBindings, mStream, NULL) )
+		if( sync )
 		{
-			LogError(LOG_TRT "failed to enqueue TensorRT context on device %s\n", deviceTypeToStr(mDevice));
-			return false;
+			if( !mContext->execute(1, mBindings) )
+			{
+				LogError(LOG_TRT "failed to execute TensorRT context on device %s\n", deviceTypeToStr(mDevice));
+				return false;
+			}
 		}
+		else
+		{
+			if( !mContext->enqueue(1, mBindings, mStream, NULL) )
+			{
+				LogError(LOG_TRT "failed to enqueue TensorRT context on device %s\n", deviceTypeToStr(mDevice));
+				return false;
+			}
+		}
+	}
+	
+	return true;
+}
 
-		//if( sync )
-		//	CUDA(cudaStreamSynchronize(stream));
+
+// validateClassLabels
+static bool validateClassLabels( std::vector<std::string>& descriptions, std::vector<std::string>& synsets, int expectedClasses )
+{
+	const int numLoaded = descriptions.size();
+	LogVerbose(LOG_TRT "loaded %i class labels\n", numLoaded);
+	
+	if( expectedClasses > 0 )
+	{
+		if( numLoaded != expectedClasses )
+			LogError(LOG_TRT "didn't load expected number of class descriptions  (%i of %i)\n", numLoaded, expectedClasses);
+
+		if( numLoaded < expectedClasses )
+		{
+			LogWarning(LOG_TRT "filling in remaining %i class descriptions with default labels\n", (expectedClasses - numLoaded));
+	
+			for( int n=numLoaded; n < expectedClasses; n++ )
+			{
+				char synset[10];
+				sprintf(synset, "n%08i", n);
+
+				char desc[64];
+				sprintf(desc, "Class #%i", n);
+
+				synsets.push_back(synset);
+				descriptions.push_back(desc);
+			}
+		}
+	}
+	else if( numLoaded == 0 )
+	{
+		return false;
+	}
+	
+	/*for( uint32_t n=0; n < descriptions.size(); n++ )
+		LogVerbose(LOG_TRT "detectNet -- class label #%u:  '%s'\n", n, descriptions[n].c_str());*/
+	
+	return true;
+}
+
+	
+// LoadClassLabels
+bool tensorNet::LoadClassLabels( const char* filename, std::vector<std::string>& descriptions, std::vector<std::string>& synsets, int expectedClasses )
+{
+	if( !filename )
+		return validateClassLabels(descriptions, synsets, expectedClasses);
+	
+	// locate the file
+	const std::string path = locateFile(filename);
+
+	if( path.length() == 0 )
+	{
+		LogError(LOG_TRT "tensorNet::LoadClassLabels() failed to find %s\n", filename);
+		return validateClassLabels(descriptions, synsets, expectedClasses);
+	}
+
+	// open the file
+	FILE* f = fopen(path.c_str(), "r");
+	
+	if( !f )
+	{
+		LogError(LOG_TRT "tensorNet::LoadClassLabels() failed to open %s\n", path.c_str());
+		return validateClassLabels(descriptions, synsets, expectedClasses);
+	}
+	
+	descriptions.clear();
+	synsets.clear();
+
+	// read class descriptions
+	char str[512];
+	uint32_t customClasses = 0;
+
+	while( fgets(str, 512, f) != NULL )
+	{
+		const int syn = 9;  // length of synset prefix (in characters)
+		const int len = strlen(str);
+		
+		if( len > syn && str[0] == 'n' && str[syn] == ' ' )
+		{
+			str[syn]   = 0;
+			str[len-1] = 0;
+	
+			const std::string a = str;
+			const std::string b = (str + syn + 1);
+	
+			//printf("a=%s b=%s\n", a.c_str(), b.c_str());
+
+			synsets.push_back(a);
+			descriptions.push_back(b);
+		}
+		else if( len > 0 )	// no 9-character synset prefix (i.e. from DIGITS snapshot)
+		{
+			char a[10];
+			sprintf(a, "n%08u", customClasses);
+
+			//printf("a=%s b=%s (custom non-synset)\n", a, str);
+			customClasses++;
+
+			if( str[len-1] == '\n' )
+				str[len-1] = 0;
+
+			synsets.push_back(a);
+			descriptions.push_back(str);
+		}
+	}
+	
+	fclose(f);
+	return validateClassLabels(descriptions, synsets, expectedClasses);
+}
+
+
+// LoadClassLabels
+bool tensorNet::LoadClassLabels( const char* filename, std::vector<std::string>& descriptions, int expectedClasses )
+{
+	std::vector<std::string> synsets;
+	return LoadClassLabels(filename, descriptions, synsets, expectedClasses);
+}
+
+
+// validateClassColors
+static bool validateClassColors( float4* colors, int numLoaded, int expectedClasses, float defaultAlpha )
+{
+	LogVerbose(LOG_TRT "loaded %i class colors\n", numLoaded);
+	
+	if( expectedClasses > 0 )
+	{
+		if( numLoaded != expectedClasses )
+			LogWarning(LOG_TRT "didn't load expected number of class colors  (%i of %i)\n", numLoaded, expectedClasses);
+
+		if( numLoaded < expectedClasses )
+		{
+			LogWarning(LOG_TRT "filling in remaining %i class colors with default colors\n", (expectedClasses - numLoaded));
+	
+			for( int n=numLoaded; n < expectedClasses; n++ )
+			{
+				colors[n] = tensorNet::GenerateColor(n, defaultAlpha);
+				//LogVerbose(LOG_TRT "class color %i  (%f %f %f %f\n", n, colors[n].x, colors[n].y, colors[n].z, colors[n].w);
+			}
+		}
+	}
+	else if( numLoaded == 0 )
+	{
+		return false;
 	}
 
 	return true;
 }
 
+
+// LoadClassColors
+bool tensorNet::LoadClassColors( const char* filename, float4* colors, int expectedClasses, float defaultAlpha )
+{
+	// validate parameters
+	if( !colors || expectedClasses <= 0 )
+	{
+		LogError(LOG_TRT "tensorNet::LoadClassColors() had invalid/NULL parameters\n");
+		return false;
+	}
+	
+	if( !filename )
+		return validateClassColors(colors, 0, expectedClasses, defaultAlpha);
+	
+	// locate the file
+	const std::string path = locateFile(filename);
+
+	if( path.length() == 0 )
+	{
+		LogError(LOG_TRT "tensorNet::LoadClassColors() failed to find %s\n", filename);
+		return validateClassColors(colors, 0, expectedClasses, defaultAlpha);
+	}
+	
+	// open the file
+	FILE* f = fopen(path.c_str(), "r");
+	
+	if( !f )
+	{
+		LogError(LOG_TRT "tensorNet::LoadClassColors() failed to open %s\n", path.c_str());
+		return validateClassColors(colors, 0, expectedClasses, defaultAlpha);
+	}
+	
+	// read class colors
+	char str[512];
+	int numLoaded = 0;
+
+	while( fgets(str, 512, f) != NULL && numLoaded < expectedClasses )
+	{
+		const int len = strlen(str);
+		
+		if( len <= 0 )
+			continue;
+		
+		if( str[len-1] == '\n' )
+			str[len-1] = 0;
+
+		float r = 255;
+		float g = 255;
+		float b = 255;
+		float a = defaultAlpha;
+
+		sscanf(str, "%f %f %f %f", &r, &g, &b, &a);
+		LogVerbose(LOG_TRT "class %02i  color %f %f %f %f\n", numLoaded, r, g, b, a);
+		colors[numLoaded] = make_float4(r, g, b, a);
+		numLoaded++; 
+	}
+	
+	fclose(f);
+	return validateClassColors(colors, numLoaded, expectedClasses, defaultAlpha);
+}
+
+
+// LoadClassColors
+bool tensorNet::LoadClassColors( const char* filename, float4** colors, int expectedClasses, float defaultAlpha )
+{
+	// validate parameters
+	if( !colors || expectedClasses <= 0 )
+	{
+		LogError(LOG_TRT "tensorNet::LoadClassColors() had invalid/NULL parameters\n");
+		return false;
+	}
+	
+	// allocate memory
+	if( !cudaAllocMapped((void**)colors, expectedClasses * sizeof(float4)) )
+		return false;
+	
+	// load colors
+	return LoadClassColors(filename, colors[0], expectedClasses, defaultAlpha);
+}
+
+
+// GenerateColor
+float4 tensorNet::GenerateColor( uint32_t classID, float alpha )
+{
+	// the first color is black, skip that one
+	classID += 1;
+
+	// https://github.com/dusty-nv/pytorch-segmentation/blob/16882772bc767511d892d134918722011d1ea771/datasets/sun_remap.py#L90
+	#define bitget(byteval, idx)	((byteval & (1 << idx)) != 0)
+	
+	int r = 0;
+	int g = 0;
+	int b = 0;
+	int c = classID;
+
+	for( int j=0; j < 8; j++ )
+	{
+		r = r | (bitget(c, 0) << 7 - j);
+		g = g | (bitget(c, 1) << 7 - j);
+		b = b | (bitget(c, 2) << 7 - j);
+		c = c >> 3;
+	}
+
+	return make_float4(r, g, b, alpha);
+}

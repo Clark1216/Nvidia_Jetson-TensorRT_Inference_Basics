@@ -53,6 +53,10 @@ int usage()
 	printf("                input_URI [output_URI]\n\n");
 	printf("Classify a video/image stream using an image recognition DNN.\n");
 	printf("See below for additional arguments that may not be shown above.\n\n");	
+	printf("optional arguments:\n");
+	printf("  --help            show this help message and exit\n");
+	printf("  --network=NETWORK pre-trained model to load (see below for options)\n");
+	printf("  --topK=N   	   show the topK number of class predictions (default: 1)\n");
 	printf("positional arguments:\n");
 	printf("    input_URI       resource URI of input stream  (see videoSource below)\n");
 	printf("    output_URI      resource URI of output stream (see videoOutput below)\n\n");
@@ -91,7 +95,7 @@ int main( int argc, char** argv )
 	if( !input )
 	{
 		LogError("imagenet:  failed to create input stream\n");
-		return 0;
+		return 1;
 	}
 
 
@@ -101,7 +105,10 @@ int main( int argc, char** argv )
 	videoOutput* output = videoOutput::Create(cmdLine, ARG_POSITION(1));
 	
 	if( !output )
+	{
 		LogError("imagenet:  failed to create output stream\n");	
+		return 1;
+	}
 	
 
 	/*
@@ -112,7 +119,7 @@ int main( int argc, char** argv )
 	if( !font )
 	{
 		LogError("imagenet:  failed to load font for overlay\n");
-		return 0;
+		return 1;
 	}
 
 
@@ -124,46 +131,53 @@ int main( int argc, char** argv )
 	if( !net )
 	{
 		LogError("imagenet:  failed to initialize imageNet\n");
-		return 0;
+		return 1;
 	}
 
-
+	const int topK = cmdLine.GetInt("topK", 1);  // by default, get only the top result
+	
+	
 	/*
 	 * processing loop
 	 */
 	while( !signal_recieved )
 	{
-		// capture next image image
+		// capture next image
 		uchar3* image = NULL;
-
-		if( !input->Capture(&image, 1000) )
+		int status = 0;
+		
+		if( !input->Capture(&image, &status) )
 		{
-			// check for EOS
-			if( !input->IsStreaming() )
-				break;
-
-			LogError("imagenet:  failed to capture next frame\n");
-			continue;
+			if( status == videoSource::TIMEOUT )
+				continue;
+			
+			break; // EOS
 		}
 
-		// classify image
-		float confidence = 0.0f;
-		const int img_class = net->Classify(image, input->GetWidth(), input->GetHeight(), &confidence);
-	
-		if( img_class >= 0 )
+		// classify image - note that if you only want the top class, you can simply run this instead:
+		// 	float confidence = 0.0f;
+		//	const int img_class = net->Classify(image, input->GetWidth(), input->GetHeight(), &confidence);
+		imageNet::Classifications classifications;	// std::vector<std::pair<uint32_t, float>>  (classID, confidence)
+
+		if( net->Classify(image, input->GetWidth(), input->GetHeight(), classifications, topK) < 0 )
+			continue;
+		
+		// draw predicted class labels
+		for( uint32_t n=0; n < classifications.size(); n++ )
 		{
-			LogVerbose("imagenet:  %2.5f%% class #%i (%s)\n", confidence * 100.0f, img_class, net->GetClassDesc(img_class));	
+			const uint32_t classID = classifications[n].first;
+			const char* classLabel = net->GetClassLabel(classID);
+			const float confidence = classifications[n].second * 100.0f;
+			
+			LogVerbose("imagenet:  %2.5f%% class #%i (%s)\n", confidence, classID, classLabel);	
 
-			if( font != NULL )
-			{
-				char str[256];
-				sprintf(str, "%05.2f%% %s", confidence * 100.0f, net->GetClassDesc(img_class));
-	
-				font->OverlayText(image, input->GetWidth(), input->GetHeight(),
-						        str, 5, 5, make_float4(255, 255, 255, 255), make_float4(0, 0, 0, 100));
-			}
-		}	
-
+			char str[256];
+			sprintf(str, "%05.2f%% %s", confidence, classLabel);
+			font->OverlayText(image, input->GetWidth(), input->GetHeight(),
+						   str, 5, 5 + n * (font->GetSize() + 5), 
+						   make_float4(255,255,255,255), make_float4(0,0,0,100));
+		}
+		
 		// render outputs
 		if( output != NULL )
 		{
@@ -176,7 +190,7 @@ int main( int argc, char** argv )
 
 			// check if the user quit
 			if( !output->IsStreaming() )
-				signal_recieved = true;
+				break;
 		}
 
 		// print out timing info

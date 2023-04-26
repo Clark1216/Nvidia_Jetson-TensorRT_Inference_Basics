@@ -1,5 +1,5 @@
 var searchData=
 [
-  ['glogger',['gLogger',['../classtensorNet.html#a14ed7e76d10917f5479dd1562d92ac4a',1,'tensorNet']]],
-  ['gprofiler',['gProfiler',['../classtensorNet.html#ae1f74819d644d0f289253fbcf5d0655f',1,'tensorNet']]]
+  ['glogger_3009',['gLogger',['../group__tensorNet.html#a0c6f7cc68ce87e0701029d40b46d1b81',1,'tensorNet']]],
+  ['gprofiler_3010',['gProfiler',['../group__tensorNet.html#a70f38033952477e55e2ecdc54f908968',1,'tensorNet']]]
 ];

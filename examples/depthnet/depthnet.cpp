@@ -163,7 +163,7 @@ int main( int argc, char** argv )
 	if( !input )
 	{
 		LogError("depthnet:  failed to create input stream\n");
-		return 0;
+		return 1;
 	}
 
 
@@ -173,7 +173,10 @@ int main( int argc, char** argv )
 	videoOutput* output = videoOutput::Create(cmdLine, ARG_POSITION(1));
 	
 	if( !output )
+	{
 		LogError("depthnet:  failed to create output stream\n");
+		return 1;
+	}
 	
 
 	/*
@@ -184,7 +187,7 @@ int main( int argc, char** argv )
 	if( !net )
 	{
 		LogError("depthnet:   failed to initialize depthNet\n");
-		return 0;
+		return 1;
 	}
 
 	// parse the desired colormap
@@ -205,17 +208,16 @@ int main( int argc, char** argv )
 	 */
 	while( !signal_recieved )
 	{
-		// capture next image image
+		// capture next image
 		pixelType* imgInput = NULL;
-
-		if( !input->Capture(&imgInput, 1000) )
+		int status = 0;
+		
+		if( !input->Capture(&imgInput, &status) )
 		{
-			// check for EOS
-			if( !input->IsStreaming() )
-				break;
-
-			LogError("depthnet:  failed to capture next frame\n");
-			continue;
+			if( status == videoSource::TIMEOUT )
+				continue;
+			
+			break; // EOS
 		}
 
 		// allocate buffers for this size frame
@@ -253,7 +255,7 @@ int main( int argc, char** argv )
 
 			// check if the user quit
 			if( !output->IsStreaming() )
-				signal_recieved = true;
+				break;
 		}
 
 		// wait for the GPU to finish		

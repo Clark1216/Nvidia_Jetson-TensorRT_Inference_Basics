@@ -24,6 +24,7 @@
 #include "videoOutput.h"
 
 #include "detectNet.h"
+#include "objectTracker.h"
 
 #include <signal.h>
 
@@ -49,20 +50,22 @@ void sig_handler(int signo)
 int usage()
 {
 	printf("usage: detectnet [--help] [--network=NETWORK] [--threshold=THRESHOLD] ...\n");
-	printf("                 input_URI [output_URI]\n\n");
+	printf("                 input [output]\n\n");
 	printf("Locate objects in a video/image stream using an object detection DNN.\n");
 	printf("See below for additional arguments that may not be shown above.\n\n");
 	printf("positional arguments:\n");
-	printf("    input_URI       resource URI of input stream  (see videoSource below)\n");
-	printf("    output_URI      resource URI of output stream (see videoOutput below)\n\n");
+	printf("    input           resource URI of input stream  (see videoSource below)\n");
+	printf("    output          resource URI of output stream (see videoOutput below)\n\n");
 
 	printf("%s", detectNet::Usage());
+	printf("%s", objectTracker::Usage());
 	printf("%s", videoSource::Usage());
 	printf("%s", videoOutput::Usage());
 	printf("%s", Log::Usage());
 
 	return 0;
 }
+
 
 int main( int argc, char** argv )
 {
@@ -90,7 +93,7 @@ int main( int argc, char** argv )
 	if( !input )
 	{
 		LogError("detectnet:  failed to create input stream\n");
-		return 0;
+		return 1;
 	}
 
 
@@ -100,7 +103,10 @@ int main( int argc, char** argv )
 	videoOutput* output = videoOutput::Create(cmdLine, ARG_POSITION(1));
 	
 	if( !output )
+	{
 		LogError("detectnet:  failed to create output stream\n");	
+		return 1;
+	}
 	
 
 	/*
@@ -111,7 +117,7 @@ int main( int argc, char** argv )
 	if( !net )
 	{
 		LogError("detectnet:  failed to load detectNet model\n");
-		return 0;
+		return 1;
 	}
 
 	// parse overlay flags
@@ -123,17 +129,16 @@ int main( int argc, char** argv )
 	 */
 	while( !signal_recieved )
 	{
-		// capture next image image
+		// capture next image
 		uchar3* image = NULL;
-
-		if( !input->Capture(&image, 1000) )
+		int status = 0;
+		
+		if( !input->Capture(&image, &status) )
 		{
-			// check for EOS
-			if( !input->IsStreaming() )
-				break; 
-
-			LogError("detectnet:  failed to capture video frame\n");
-			continue;
+			if( status == videoSource::TIMEOUT )
+				continue;
+			
+			break; // EOS
 		}
 
 		// detect objects in the frame
@@ -147,8 +152,11 @@ int main( int argc, char** argv )
 		
 			for( int n=0; n < numDetections; n++ )
 			{
-				LogVerbose("detected obj %i  class #%u (%s)  confidence=%f\n", n, detections[n].ClassID, net->GetClassDesc(detections[n].ClassID), detections[n].Confidence);
-				LogVerbose("bounding box %i  (%f, %f)  (%f, %f)  w=%f  h=%f\n", n, detections[n].Left, detections[n].Top, detections[n].Right, detections[n].Bottom, detections[n].Width(), detections[n].Height()); 
+				LogVerbose("\ndetected obj %i  class #%u (%s)  confidence=%f\n", n, detections[n].ClassID, net->GetClassDesc(detections[n].ClassID), detections[n].Confidence);
+				LogVerbose("bounding box %i  (%.2f, %.2f)  (%.2f, %.2f)  w=%.2f  h=%.2f\n", n, detections[n].Left, detections[n].Top, detections[n].Right, detections[n].Bottom, detections[n].Width(), detections[n].Height()); 
+			
+				if( detections[n].TrackID >= 0 ) // is this a tracked object?
+					LogVerbose("tracking  ID %i  status=%i  frames=%i  lost=%i\n", detections[n].TrackID, detections[n].TrackStatus, detections[n].TrackFrames, detections[n].TrackLost);
 			}
 		}	
 
@@ -164,7 +172,7 @@ int main( int argc, char** argv )
 
 			// check if the user quit
 			if( !output->IsStreaming() )
-				signal_recieved = true;
+				break;
 		}
 
 		// print out timing info

@@ -33,26 +33,54 @@ FROM ${BASE_IMAGE}
 ENV DEBIAN_FRONTEND=noninteractive
 ENV SHELL /bin/bash
 
-WORKDIR jetson-inference
+WORKDIR /jetson-inference
 
-        
+  
 #
 # install development packages
 #
-RUN apt-get update && \
+RUN add-apt-repository --remove "deb https://apt.kitware.com/ubuntu/ $(lsb_release --codename --short) main" && \
+    apt-get update && \
+    apt-get purge -y '*opencv*' || echo "existing OpenCV installation not found" && \
     apt-get install -y --no-install-recommends \
             cmake \
 		  nano \
-    && rm -rf /var/lib/apt/lists/*
-    
-# pip dependencies for pytorch-ssd
-RUN pip3 install --verbose --upgrade Cython && \
-    pip3 install --verbose boto3 pandas
+		  mesa-utils \
+		  lsb-release \
+		  gstreamer1.0-tools \
+		  gstreamer1.0-libav \
+		  gstreamer1.0-rtsp \
+		  gstreamer1.0-plugins-good \
+		  gstreamer1.0-plugins-bad \
+		  gstreamer1.0-plugins-ugly \
+		  libgstreamer-plugins-base1.0-dev \
+		  libgstreamer-plugins-good1.0-dev \
+		  libgstreamer-plugins-bad1.0-dev && \
+    if [ `lsb_release --codename --short` != 'bionic' ]; then \
+    apt-get install -y --no-install-recommends \
+		  gstreamer1.0-plugins-rtp; \
+    else echo "skipping packages unavailable for Ubuntu 18.04"; fi \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# alias python3 -> python
-RUN rm /usr/bin/python && \
-    ln -s /usr/bin/python3 /usr/bin/python && \
-    ln -s /usr/bin/pip3 /usr/bin/pip
+# make a copy of this cause it gets purged...
+RUN mkdir -p /usr/local/include/gstreamer-1.0/gst && \
+    cp -r /usr/include/gstreamer-1.0/gst/webrtc /usr/local/include/gstreamer-1.0/gst && \
+    ls -ll /usr/local/include/ && \
+    ls -ll /usr/local/include/gstreamer-1.0/gst/webrtc
+
+
+# 
+# install python packages
+#
+COPY python/training/detection/ssd/requirements.txt /tmp/pytorch_ssd_requirements.txt
+COPY python/www/flask/requirements.txt /tmp/flask_requirements.txt
+COPY python/www/dash/requirements.txt /tmp/dash_requirements.txt
+
+RUN pip3 install --no-cache-dir --verbose --upgrade Cython && \
+    pip3 install --no-cache-dir --verbose -r /tmp/pytorch_ssd_requirements.txt && \
+    pip3 install --no-cache-dir --verbose -r /tmp/flask_requirements.txt && \
+    pip3 install --no-cache-dir --verbose -r /tmp/dash_requirements.txt
     
     
 # 
@@ -61,30 +89,15 @@ RUN rm /usr/bin/python && \
 ARG OPENCV_URL=https://nvidia.box.com/shared/static/5v89u6g5rb62fpz4lh0rz531ajo2t5ef.gz
 ARG OPENCV_DEB=OpenCV-4.5.0-aarch64.tar.gz
 
-RUN apt-get purge -y '*opencv*' || echo "previous OpenCV installation not found" && \
-    mkdir opencv && \
-    cd opencv && \
-    wget --quiet --show-progress --progress=bar:force:noscroll --no-check-certificate ${OPENCV_URL} -O ${OPENCV_DEB} && \
-    tar -xzvf ${OPENCV_DEB} && \
-    dpkg -i --force-depends *.deb && \
-    apt-get update && \
-    apt-get install -y -f --no-install-recommends && \
-    dpkg -i *.deb && \
-    rm -rf /var/lib/apt/lists/* && \
-    apt-get clean && \
-    cd ../ && \
-    rm -rf opencv && \
-    cp -r /usr/include/opencv4 /usr/local/include/opencv4 && \
-    cp -r /usr/lib/python3.6/dist-packages/cv2 /usr/local/lib/python3.6/dist-packages/cv2
-    
-    
+COPY docker/containers/scripts/opencv_install.sh /tmp/opencv_install.sh
+RUN cd /tmp && ./opencv_install.sh ${OPENCV_URL} ${OPENCV_DEB}
+
+  
 #
 # copy source
 #
 COPY c c
-COPY calibration calibration
 COPY examples examples
-COPY plugins plugins
 COPY python python
 COPY tools tools
 COPY utils utils
@@ -99,11 +112,17 @@ COPY CMakePreBuild.sh CMakePreBuild.sh
 RUN mkdir docs && \
     touch docs/CMakeLists.txt && \
     sed -i 's/nvcaffe_parser/nvparsers/g' CMakeLists.txt && \
+    cp -r /usr/local/include/gstreamer-1.0/gst/webrtc /usr/include/gstreamer-1.0/gst && \
+    ln -s /usr/lib/$(uname -m)-linux-gnu/libgstwebrtc-1.0.so.0 /usr/lib/$(uname -m)-linux-gnu/libgstwebrtc-1.0.so && \
     mkdir build && \
     cd build && \
     cmake ../ && \
     make -j$(nproc) && \
     make install && \
-    /bin/bash -O extglob -c "cd /jetson-inference/build; rm -rf -v !(aarch64|download-models.*)" && \
-    rm -rf /var/lib/apt/lists/*
+    /bin/bash -O extglob -c "cd /jetson-inference/build; rm -rf -v !($(uname -m)|download-models.*)" && \
+    rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
     
+
+# workaround for "cannot allocate memory in static TLS block"
+ENV LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libgomp.so.1
