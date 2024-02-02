@@ -5,7 +5,7 @@
 
 # Camera Streaming and Multimedia
 
-This project supports streaming video feeds and images via a variety of interfaces and protocols, including:
+This project supports capturing and streaming video feeds & static images via a variety of interfaces and protocols, including:
 
 * [MIPI CSI cameras](#mipi-csi-cameras)
 * [V4L2 cameras](#v4l2-cameras)
@@ -15,7 +15,7 @@ This project supports streaming video feeds and images via a variety of interfac
 * [Image sequences](#image-files)
 * [OpenGL windows](#output-streams)
 
-Streams are identified via a resource URI and accessed through the [`videoSource`](#source-code) and [`videoOutput`](#source-code) APIs.  The tables below show the supported input/output protocols and example URIs for each type of stream:
+Streams are identified via a resource URI and are acquired through the [`videoSource`](#source-code) and [`videoOutput`](#source-code) APIs.  These settings can be configured via command-line arguments or in your application's [source code](#source-code).  The tables below show the supported input/output protocols and URI formats:
 
 ### Input Streams
 
@@ -54,7 +54,7 @@ Streams are identified via a resource URI and accessed through the [`videoSource
 Each example C++ and Python program from jetson-inference accepts the same set of command-line arguments for specifying stream URIs and additional options. So these options can be used on any of the examples (e.g. [`imagenet`](../examples/imagenet/imagenet.cpp)/[`imagenet.py`](../examples/python/imagenet.py), [`detectnet`](../examples/detectnet/detectnet.cpp)/[`detectnet.py`](../examples/python/detectnet.py), [`segnet`](../examples/segnet/segnet.cpp)/[`segnet.py`](../examples/python/segnet.py), [`video-viewer`](https://github.com/dusty-nv/jetson-utils/tree/master/video/video-viewer/video-viewer.cpp)/[`video-viewer.py`](https://github.com/dusty-nv/jetson-utils/tree/master/python/examples/video-viewer.py), ect).  These command-line arguments generally take the form:
 
 ```bash
-$ imagenet [options] input_URI [output_URI]  # output URI is optional
+$ imagenet [options] input_URI [output_URI]  # output URI is optional (default is display://0)
 ```
 
 where the input and output URIs are specified by two positional arguments.  For example:
@@ -188,9 +188,9 @@ $ v4l2-ctl --device=/dev/video0 --list-formats-ext
   
 ## WebRTC
 
-This projects includes a built-in WebRTC server that's capable of streaming video to/from browsers, including Chrome/Chromium, mobile Android, and mobile iOS (Safari).  You can use this for conveniently viewing video streams when your Jetson is headless and doesn't have a display attached, or for easily building interactive webapps that use Jetson and edge AI on the backend.
+This projects includes a built-in WebRTC server (input/output) for streaming video to/from client web browsers.  You can use this for conveniently viewing video streams when your Jetson is headless and doesn't have a display attached, or for easily building interactive webapps that use Jetson and edge AI on the backend.  Tested browsers include Chrome/Chromium, mobile Android, and mobile iOS (Safari). 
 
-``` bash
+```bash
 $ video-viewer /dev/video0 webrtc://@:8554/my_output               # send V4L2 webcam to browser
 $ video-viewer webrtc://@:8554/my_input output.mp4                 # receive browser webcam (requires HTTPS/SSL) and save to MP4
 $ video-viewer webrtc://@:8554/my_input webrtc://@:8554/my_output  # receieve + send (full-duplex loopback)
@@ -198,7 +198,7 @@ $ video-viewer webrtc://@:8554/my_input webrtc://@:8554/my_output  # receieve + 
 
 > **note**: receiving browser webcams requires [HTTPS/SSL](webrtc-server.md#enabling-https--ssl) to be enabled
 
-You should then be able to navigate your browser to `https://<JETSON-IP>:8554` to view the stream.  There's an entire section of the Hello AI World tutorial dedicated to using WebRTC and building applications with various webapp frameworks - please see here:
+You should then be able to navigate your browser to `https://<JETSON-IP>:8554` to view the stream.  There's an entire section of the Hello AI World tutorial dedicated to using WebRTC and building applications with various webapp frameworks:
 
 * [WebRTC Server](webrtc-server.md)
 * [WebAPP Frameworks](../README.md#webapp-frameworks)
@@ -287,7 +287,7 @@ You should then be able to open and view the stream from an RTSP client (like VL
 
 ## Video Files
 
-You can playback and record video files in MP4, MKV, AVI, and FLV formats.
+You can playback and record compressed video files in MP4, MKV, AVI, and FLV formats (in addition to uncontainerized H264/H265).
 
 ```bash
 # playback
@@ -310,8 +310,8 @@ $ video-viewer --output-codec=h265 input.mp4 output.mp4  # transcode video to H.
 
 The following codecs are supported:
 
-* Decode - H.264, H.265, VP8, VP9, MPEG-2, MPEG-4, MJPEG
-* Encode - H.264, H.265, VP8, VP9, MJPEG
+* Decode - `h264, h265, vp8, vp9, mpeg2, mpeg4, mjpeg`
+* Encode - `h264, h265, vp8, vp9, mjpeg`
 
 
 #### Resizing Inputs
@@ -334,6 +334,22 @@ By default, the video will terminate once the end of stream (EOS) is reached.  H
 $ video-viewer --loop=10 my_video.mp4    # loop the video 10 times
 $ video-viewer --loop=-1 my_video.mp4    # loop the video forever (until user quits)
 ```
+
+#### Secondary Destination
+
+Sometimes you may wish to save the unprocessed camera feed (or the post-processed video) to disk in addition to the primary output stream.  For incoming inputs that are already compressed (for example, an H264-encoded camera or network stream), the `--input-save=<FILE>` option can be used to dump the encoded video to disk before it's decoded and processed.  It supports MP4, MKV, AVI, FLV, and raw H264/H265.
+
+For output streams that are to be compressed (i.e. network streams like WebRTC/RTP/RTSP) then the `--output-save=<FILE>` option will record the processed video to disk in addition to it's primary output.  To save an output video file while also displaying it on a screen attached to your Jetson (which doesn't undergo compression), just use the method above for [recording video](#video-files) and an OpenGL GUI window will automatically open.
+
+
+``` bash
+$ detectnet --input-codec=h264 --input-save=camera_dump.mp4 /dev/video0       # save incoming/unprocessed video
+$ detectnet --output-save=post_dump.mp4 /dev/video0 rtsp://@:1234/my_stream   # save outgoing/processed video
+```
+
+> **note:** `--input-save` and `--output-save` can only be used in conjunction with streams that are already compressed/encoded.
+
+The first command will dump the original camera video, and the second will dump it after processing (e.g. including bounding boxes, ect)
 
 ## Image Files
 
@@ -381,7 +397,7 @@ Streams are accessed using the [`videoSource`](https://github.com/dusty-nv/jetso
 
 To convert images to/from different formats, see the [Image Manipulation with CUDA](aux-image.md) page for more info.
 
-Below is the source code to `video-viewer.py` and `video-viewer.cpp`, slightly abbreviated to improve readability:
+Below is the source code to [`video-viewer.py`](https://github.com/dusty-nv/jetson-utils/tree/master/python/examples/video-viewer.py) and [`video-viewer`](https://github.com/dusty-nv/jetson-utils/tree/master/video/video-viewer/video-viewer.cpp), slightly abbreviated to improve readability:
 
 ### Python
 ```python
@@ -397,22 +413,33 @@ parser.add_argument("output", type=str, default="", nargs='?', help="URI of the 
 args = parser.parse_known_args()[0]
 
 # create video sources & outputs
-input = jetson.utils.videoSource(args.input, argv=sys.argv)
-output = jetson.utils.videoOutput(args.output, argv=sys.argv)
+input = videoSource(args.input, argv=sys.argv)    # default:  options={'width': 1280, 'height': 720, 'framerate': 30}
+output = videoOutput(args.output, argv=sys.argv)  # default:  options={'codec': 'h264', 'bitrate': 4000000}
 
-# capture frames until user exits
+# capture frames until end-of-stream (or the user exits)
 while True:
-	image = input.Capture(format='rgb8')  # can also be format='rgba8', 'rgb32f', 'rgba32f'
+    # format can be:   rgb8, rgba8, rgb32f, rgba32f (rgb8 is the default)
+    # timeout can be:  -1 for infinite timeout (blocking), 0 to return immediately, >0 in milliseconds (default is 1000ms)
+    image = input.Capture(format='rgb8', timeout=1000)  
 	
-	if image is None:  # capture timeout
-		continue
+    if image is None:  # if a timeout occurred
+        continue
 		
-	output.Render(image)
+    output.Render(image)
 
-	# exit on input/output EOS
-	if not input.IsStreaming() or not output.IsStreaming():
-		break
+    # exit on input/output EOS
+    if not input.IsStreaming() or not output.IsStreaming():
+        break
 ```
+
+To hardcode video configuration settings in Python, you can pass an optional `options` dictionary to the videoSource/videoOutput initializer, which roughly corresponds to the [`videoOptions`](https://github.com/dusty-nv/jetson-utils/blob/master/video/videoOptions.h) structure in C++:
+
+``` python
+input = videoSource("/dev/video0", options={'width': 1280, 'height': 720, 'framerate': 30, 'flipMethod': 'rotate-180'})
+output = videoOutput("my_video.mp4", options={'codec': 'h264', 'bitrate': 4000000})
+```
+
+The input settings will use the closest resolution/framerate available, but it's recommend to check your camera's [supported formats](#v4l2-formats) first.
 
 ### C++
 ```c++
@@ -421,41 +448,56 @@ while True:
 
 int main( int argc, char** argv )
 {
-	// create input/output streams
-	videoSource* input = videoSource::Create(argc, argv, ARG_POSITION(0));
-	videoOutput* output = videoOutput::Create(argc, argv, ARG_POSITION(1));
+    // create input/output streams
+    videoSource* input = videoSource::Create(argc, argv, ARG_POSITION(0));
+    videoOutput* output = videoOutput::Create(argc, argv, ARG_POSITION(1));
 	
-	if( !input )
-		return 0;
+    if( !input )
+        return 0;
 
-	// capture/display loop
-	while( true )
-	{
-		uchar3* image = NULL;  // can be uchar3, uchar4, float3, float4
-		int status = 0;        // see videoSource::Status (OK, TIMEOUT, EOS, ERROR)
+    // capture/display loop
+    while( true )
+    {
+        uchar3* image = NULL;  // can be uchar3, uchar4, float3, float4
+        int status = 0;        // see videoSource::Status (OK, TIMEOUT, EOS, ERROR)
 		
-		if( !input->Capture(&image, 1000, &status) )  // 1000ms timeout
-		{
-			if( status == videoSource::TIMEOUT )
-				continue;
+        if( !input->Capture(&image, 1000, &status) )  // 1000ms timeout (default)
+        {
+            if( status == videoSource::TIMEOUT )
+                continue;
 				
-			break; // EOS
-		}
+            break; // EOS
+        }
 
-		if( output != NULL )
-		{
-			output->Render(image, inputStream->GetWidth(), inputStream->GetHeight());
+        if( output != NULL )
+        {
+            output->Render(image, inputStream->GetWidth(), inputStream->GetHeight());
 
-			if( !output->IsStreaming() )  // check if the user quit
-				break;
-		}
-	}
+            if( !output->IsStreaming() )  // check if the user quit
+                break;
+        }
+    }
 
-	// destroy resources
-	SAFE_DELETE(input);
-	SAFE_DELETE(output);
+    // destroy resources
+    SAFE_DELETE(input);
+    SAFE_DELETE(output);
 }
 ```
+
+To create the interfaces programatically from coded settings, the [`videoOptions`](https://github.com/dusty-nv/jetson-utils/blob/master/video/videoOptions.h) struct can also be populated like this:
+
+```c++
+videoOptions options;
+
+options.width = 1280;
+options.height = 720;
+options.frameRate = 30;
+options.flipMethod = videoOptions::FLIP_ROTATE_180;
+
+videoSource* input = videoSource::Create("/dev/video0", options);
+```
+
+The input settings will use the closest resolution/framerate available, but it's recommend to check your camera's [supported formats](#v4l2-formats) first.
 
 <p align="right">Next | <b><a href="aux-image.md">Image Manipulation with CUDA</a></b>
 <p align="center"><sup>© 2016-2020 NVIDIA | </sup><a href="../README.md#hello-ai-world"><sup>Table of Contents</sup></a></p>

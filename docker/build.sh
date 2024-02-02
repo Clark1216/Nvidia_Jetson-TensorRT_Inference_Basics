@@ -17,7 +17,11 @@ source docker/tag.sh
 
 if [ -z $BASE_IMAGE ]; then
 	if [ $ARCH = "aarch64" ]; then
-		if [ $L4T_VERSION = "35.2.1" ]; then
+		if [ $L4T_VERSION = "35.4.1" ]; then
+			BASE_IMAGE="dustynv/l4t-pytorch:r35.4.1"
+		elif [ $L4T_VERSION = "35.3.1" ]; then
+			BASE_IMAGE="dustynv/l4t-pytorch:r35.3.1"
+		elif [ $L4T_VERSION = "35.2.1" ]; then
 			BASE_IMAGE="nvcr.io/nvidia/l4t-pytorch:r35.2.1-pth2.0-py3"
 		elif [ $L4T_VERSION = "35.1.0" ]; then
 			BASE_IMAGE="nvcr.io/nvidia/l4t-pytorch:r35.1.0-pth1.12-py3"
@@ -45,28 +49,18 @@ if [ -z $BASE_IMAGE ]; then
 			exit 1
 		fi
 	elif [ $ARCH = "x86_64" ]; then
-		BASE_IMAGE="nvcr.io/nvidia/pytorch:22.04-py3"
+		BASE_IMAGE="nvcr.io/nvidia/pytorch:$CONTAINER_TAG-py3"
 	fi
 fi
 
 echo "BASE_IMAGE=$BASE_IMAGE"
-echo "TAG=$TAG"
+echo "CONTAINER_IMAGE=$CONTAINER_LOCAL_IMAGE"
 
-
-# sanitize workspace (so extra files aren't added to the container)
-rm -rf python/training/classification/data/*
-rm -rf python/training/classification/models/*
-
-rm -rf python/training/detection/ssd/data/*
-rm -rf python/training/detection/ssd/models/*
-
-	
 # distro release-dependent build options 
 source docker/containers/scripts/opencv_version.sh
-	
-	
+		
 # build the container
-sudo docker build -t $TAG -f Dockerfile \
+sudo docker build -t $CONTAINER_LOCAL_IMAGE -f Dockerfile \
           --build-arg BASE_IMAGE=$BASE_IMAGE \
 		--build-arg OPENCV_URL=$OPENCV_URL \
 		--build-arg OPENCV_DEB=$OPENCV_DEB \

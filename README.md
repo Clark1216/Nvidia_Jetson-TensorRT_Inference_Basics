@@ -1,9 +1,9 @@
 <img src="https://github.com/dusty-nv/jetson-inference/raw/master/docs/images/deep-vision-header.jpg" width="100%">
 
 # Deploying Deep Learning
-Welcome to our instructional guide for inference and realtime vision [DNN library](#api-reference) for NVIDIA **[Jetson Nano / TX1 / TX2 / Xavier / Orin](https://developer.nvidia.com/embedded-computing)** devices.  This project uses **[TensorRT](https://developer.nvidia.com/tensorrt)** to run optimized models on GPUs, and PyTorch for training.
+Welcome to our instructional guide for inference and realtime vision [DNN library](#api-reference) for **[NVIDIA Jetson](https://developer.nvidia.com/embedded-computing)** devices.  This project uses **[TensorRT](https://developer.nvidia.com/tensorrt)** to run optimized networks on GPUs from C++ or Python, and PyTorch for training models.
 
-Supported DNN vision primitives include [`imageNet`](docs/imagenet-console-2.md) for image classification, [`detectNet`](docs/detectnet-console-2.md) for object detection, [`segNet`](docs/segnet-console-2.md) for semantic segmentation, [`poseNet`](docs/posenet.md) for pose estimation, and [`actionNet`](docs/actionnet.md) for action recognition.  Examples are provided for streaming from live camera feeds and making webapps with WebRTC.  See the **[API Reference](#api-reference)** section for detailed reference documentation of the C++ and Python libraries. 
+Supported DNN vision primitives include [`imageNet`](docs/imagenet-console-2.md) for image classification, [`detectNet`](docs/detectnet-console-2.md) for object detection, [`segNet`](docs/segnet-console-2.md) for semantic segmentation, [`poseNet`](docs/posenet.md) for pose estimation, and [`actionNet`](docs/actionnet.md) for action recognition.  Examples are provided for streaming from live camera feeds, making webapps with WebRTC, and support for ROS/ROS2.
 
 <img src="https://github.com/dusty-nv/jetson-inference/raw/master/docs/images/deep-vision-primitives.jpg">
 
@@ -19,13 +19,13 @@ Follow the **[Hello AI World](#hello-ai-world)** tutorial for running inference 
 * [System Requirements](#recommended-system-requirements)
 * [Change Log](CHANGELOG.md)
 
-> &gt; &nbsp; JetPack 5 is now supported, along with [Jetson Orin Nano](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/). <br/>
-> &gt; &nbsp; Try the new [WebApp Frameworks](#webapp-frameworks) and [WebRTC](docs/webrtc-server.md) tutorials! <br/>
+> &gt; &nbsp; JetPack 6 is now supported on Orin devices ([developer.nvidia.com/jetpack](https://developer.nvidia.com/embedded/jetpack)) <br/>
+> &gt; &nbsp; Check out the Generative AI and LLM tutorials on [Jetson AI Lab](https://www.jetson-ai-lab.com/)! <br/>
 > &gt; &nbsp; See the [Change Log](CHANGELOG.md) for the latest updates and new features. <br/>
 
 ## Hello AI World
 
-Hello AI World can be run completely onboard your Jetson, including inferencing with TensorRT and transfer learning with PyTorch.  The inference portion of Hello AI World - which includes coding your own image classification and object detection applications for Python or C++, and live camera demos - can be run on your Jetson in roughly two hours or less, while transfer learning is best left to leave running overnight.
+Hello AI World can be run completely onboard your Jetson, including live inferencing with TensorRT and transfer learning with PyTorch.  For installation instructions, see [System Setup](#system-setup).  It's then recommended to start with the [Inference](#inference) section to familiarize yourself with the concepts, before diving into [Training](#training) your own models.
 
 #### System Setup
 
@@ -71,7 +71,8 @@ Hello AI World can be run completely onboard your Jetson, including inferencing 
 * [WebRTC Server](docs/webrtc-server.md)
 * [HTML / JavaScript](docs/webrtc-html.md)
 * [Flask + REST](docs/webrtc-flask.md)
-* [Plotly Dash](docs/webrtc-dash.md)
+* [Plotly Dashboard](docs/webrtc-dash.md)
+* [Recognizer (Interactive Training)](docs/webrtc-recognizer.md)
 
 #### Appendix
 
@@ -122,7 +123,7 @@ Introductory code walkthroughs of using the library are covered during these ste
 * [Coding Your Own Image Recognition Program (Python)](docs/imagenet-example-python-2.md)
 * [Coding Your Own Image Recognition Program (C++)](docs/imagenet-example-2.md)
 
-Additional C++ and Python samples for running the networks on static images and live camera streams can be found here:
+Additional C++ and Python samples for running the networks on images and live camera streams can be found here:
 
 |                   | C++              | Python             |
 |-------------------|---------------------|---------------------|
@@ -134,7 +135,7 @@ Additional C++ and Python samples for running the networks on static images and 
 | &nbsp;&nbsp;&nbsp;Background Removal | [`backgroundnet.cpp`](examples/backgroundnet/backgroundnet.cpp) | [`backgroundnet.py`](python/examples/backgroundnet.py) |
 | &nbsp;&nbsp;&nbsp;Monocular Depth    | [`depthnet.cpp`](examples/depthnet/segnet.cpp) | [`depthnet.py`](python/examples/depthnet.py) |
 
-> **note**:  for working with numpy arrays, see [Converting to Numpy Arrays](docs/aux-image.md#converting-to-numpy-arrays) and [Converting from Numpy Arrays](docs/aux-image.md#converting-from-numpy-arrays)
+> **note**:  see the [Array Interfaces](docs/aux-image.md#array-interfaces) section for using memory with other Python libraries (like Numpy, PyTorch, ect)
 
 These examples will automatically be compiled while [Building the Project from Source](docs/building-repo-2.md), and are able to run the pre-trained models listed below in addition to custom models provided by the user.  Launch each example with `--help` for usage info.
 
@@ -239,6 +240,7 @@ The project comes with a number of pre-trained models that are available to use 
 
 * Jetson Nano Developer Kit with JetPack 4.2 or newer (Ubuntu 18.04 aarch64).  
 * Jetson Nano 2GB Developer Kit with JetPack 4.4.1 or newer (Ubuntu 18.04 aarch64).
+* Jetson Orin Nano Developer Kit with JetPack 5.0 or newer (Ubuntu 20.04 aarch64).
 * Jetson Xavier NX Developer Kit with JetPack 4.4 or newer (Ubuntu 18.04 aarch64).  
 * Jetson AGX Xavier Developer Kit with JetPack 4.0 or newer (Ubuntu 18.04 aarch64).  
 * Jetson AGX Orin Developer Kit with JetPack 5.0 or newer (Ubuntu 20.04 aarch64).

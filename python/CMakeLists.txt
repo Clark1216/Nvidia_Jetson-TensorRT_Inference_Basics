@@ -5,7 +5,9 @@
 #
 # If you want to support another version of Python, add it here.
 #
-if(LSB_RELEASE_CODENAME MATCHES "focal")
+if(LSB_RELEASE_CODENAME MATCHES "jammy")
+	set(PYTHON_BINDING_VERSIONS 3.10)
+elseif(LSB_RELEASE_CODENAME MATCHES "focal")
 	set(PYTHON_BINDING_VERSIONS 3.8)
 else()
 	set(PYTHON_BINDING_VERSIONS 2.7 3.6 3.7)
@@ -39,11 +41,3 @@ function(copy_install file_in file_out)
     install(FILES "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${file_out}" DESTINATION bin PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 endfunction()
 
-copy_install("examples/imagenet.py" "imagenet-console.py")
-copy_install("examples/imagenet.py" "imagenet-camera.py")
-
-copy_install("examples/detectnet.py" "detectnet-console.py")
-copy_install("examples/detectnet.py" "detectnet-camera.py")
-
-copy_install("examples/segnet.py" "segnet-console.py")
-copy_install("examples/segnet.py" "segnet-camera.py")

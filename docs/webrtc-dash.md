@@ -1,11 +1,11 @@
 <img src="https://github.com/dusty-nv/jetson-inference/raw/master/docs/images/deep-vision-header.jpg" width="100%">
-<p align="right"><sup><a href="webrtc-flask.md">Back</a> | <a href="webrtc-dash.md">Next</a> | </sup><a href="../README.md#hello-ai-world"><sup>Contents</sup></a>
+<p align="right"><sup><a href="webrtc-flask.md">Back</a> | <a href="webrtc-recognizer.md">Next</a> | </sup><a href="../README.md#hello-ai-world"><sup>Contents</sup></a>
 <br/>
 <sup>WebApp Frameworks</sup></s></p>
 
-# Plotly Dash
+# Plotly Dashboard
 
-[Plotly Dash](https://plotly.com/dash/) is a Python-based web framework for building data-driven dashboard and interactive UI's.  On the frontend it uses [React.js](https://reactjs.org/) client-side, which connects state changes to Python callbacks running on the server.  With it, you can quickly develop rich visualizations that integrate with backend processing pipelines and data analytics.  In this example (found under [`python/www/dash`](../python/www/dash)), users can dynamically create streams, load DNN models, visualize events, and setup extendable actions triggered by events:
+[Plotly Dash](https://plotly.com/dash/) is a Python-based web framework for building data-driven dashboards and interactive UI's.  On the frontend it uses [React.js](https://reactjs.org/) client-side, which connects state changes to Python callbacks running on the server.  With it, you can quickly develop rich visualizations that integrate with backend processing pipelines and data analytics.  In this example (found under [`python/www/dash`](../python/www/dash)), users can dynamically create streams, load DNN models, visualize events, and setup extendable actions triggered by events:
 
 <img src="https://github.com/dusty-nv/jetson-inference/raw/master/docs/images/webrtc-dash.jpg" width="1000">
 
@@ -146,7 +146,7 @@ def min_score(self, min_score):
 
 Note the Python type hints that are specified on the getter functions - these inform the frontend of what kind of UI control to use (e.g. textbox, slider, checkbox, ect).  Supported types are `str`, `int`, `float`, and `bool`.  If the type hint is omitted, it will be assumed to be a string with a textbox input, and the user's plugin will be responsible for parsing/converting it to the desired type.
 
-<p align="right">Next | <b><a href="aux-streaming.md">Camera Streaming and Multimedia</a></b>
+<p align="right">Next | <b><a href="webrtc-recognizer.md">Recognizer (Interactive Training)</a></b>
 <br/>
 Back | <b><a href="webrtc-flask.md">Flask + REST</a></p>
 </b><p align="center"><sup>© 2016-2023 NVIDIA | </sup><a href="../README.md#hello-ai-world"><sup>Table of Contents</sup></a></p>

@@ -612,7 +612,9 @@ bool tensorNet::ProfileModel(const std::string& deployFile,			   // name for caf
 			nvinfer1::ITensor* tensor = blobNameToTensor->find(outputs[n].c_str());
 		
 			if( !tensor )
+			{
 				LogError(LOG_TRT "failed to retrieve tensor for Output \"%s\"\n", outputs[n].c_str());
+			}
 			else
 			{
 			#if NV_TENSORRT_MAJOR >= 4
@@ -1136,9 +1138,13 @@ bool tensorNet::LoadNetwork( const char* prototxt_path_, const char* model_path_
 		loadedPlugins = initLibNvInferPlugins(&gLogger, "");
 
 		if( !loadedPlugins )
+		{
 			LogError(LOG_TRT "failed to load NVIDIA plugins\n");
+		}
 		else
+		{
 			LogVerbose(LOG_TRT "completed loading NVIDIA plugins.\n");
+		}
 	}
 #endif
 
@@ -1740,6 +1746,7 @@ bool tensorNet::ProcessNetwork( bool sync )
 {
 	if( TENSORRT_VERSION_CHECK(8,4,1) && mModelType == MODEL_ONNX )
 	{
+	#if TENSORRT_VERSION_CHECK(8,4,1)
 		// on TensorRT 8.4.1 (JetPack 5.0.2 / L4T R35.1.0) and newer, this warning appears:
 		// the execute() method has been deprecated when used with engines built from a network created with NetworkDefinitionCreationFlag::kEXPLICIT_BATCH flag. Please use executeV2() instead.
 		// also, the batchSize argument passed into this function has no effect on changing the input shapes. Please use setBindingDimensions() function to change input shapes instead.
@@ -1759,6 +1766,7 @@ bool tensorNet::ProcessNetwork( bool sync )
 				return false;
 			}
 		}
+	#endif
 	}
 	else
 	{
