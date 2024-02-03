@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # find L4T_VERSION
-source docker/containers/scripts/l4t_version.sh
+source ./docker/containers/scripts/l4t_version.sh
 
 if [ $ARCH = "aarch64" ]; then
 	# local container tag
